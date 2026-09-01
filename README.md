@@ -18,7 +18,7 @@ VPN user ──► Iran VPS  :1194 / :500 / :4500 ...
 ## Install (one line, on both servers)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/pashm/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/BOMALO-TUNNEL/main/install.sh)
 ```
 
 Then:
@@ -114,7 +114,7 @@ journalctl -u bomalo -f
 ## Building manually
 
 ```bash
-git clone https://github.com/javadtifusi-eng/pashm && cd pashm
+git clone https://github.com/javadtifusi-eng/BOMALO-TUNNEL && cd BOMALO-TUNNEL
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bomalo .
 ```
 
@@ -136,7 +136,7 @@ Standard library only — no third-party modules.
 ## نصب (یک خط، روی هر دو سرور)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/pashm/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/BOMALO-TUNNEL/main/install.sh)
 ```
 
 سپس:

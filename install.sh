@@ -4,7 +4,7 @@
 set -uo pipefail
 
 REPO_USER="javadtifusi-eng"
-REPO_NAME="pashm"
+REPO_NAME="BOMALO-TUNNEL"
 BRANCH="main"
 RAW="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/${BRANCH}"
 RELEASE="https://github.com/${REPO_USER}/${REPO_NAME}/releases/latest/download"
