@@ -17,6 +17,7 @@ SRC_DIR=/opt/bomalo-src
 GO_MIN=1.21
 
 R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; B=$'\e[36m'; D=$'\e[2m'; N=$'\e[0m'
+M=$'\e[35m'; W=$'\e[97m'; BD=$'\e[1m'; GLD=$'\e[38;5;179m'; RED=$'\e[38;5;167m'
 
 info() { echo "${B}==>${N} $*"; }
 ok()   { echo "${G} ok ${N} $*"; }
@@ -24,6 +25,8 @@ warn() { echo "${Y} !! ${N} $*"; }
 die()  { echo "${R}fail${N} $*"; exit 1; }
 
 banner() {
+  clear 2>/dev/null || true
+  printf '%s' "$GLD"
 cat <<'EOF'
   ____                        _         _____                       _
  | __ )  ___  _ __ ___   __ _| | ___   |_   _|   _ _ __  _ __   ___| |
@@ -31,9 +34,12 @@ cat <<'EOF'
  | |_) | (_) | | | | | | (_| | | (_) |   | || |_| | | | | | | |  __/ |
  |____/ \___/|_| |_| |_|\__,_|_|\___/    |_| \__,_|_| |_|_| |_|\___|_|
 EOF
-echo "                         reverse tunnel  ${D}installer${N}"
-echo
+  printf '%s' "$N"
+  echo "        ${RED}reverse tunnel${N}  ${D}client-initiated · zero inbound ports${N}"
+  echo
 }
+
+pause() { echo; read -r -p "  ${D}press Enter to continue${N} " _; }
 
 require_root() { [ "$(id -u)" = 0 ] || die "run this script as root (sudo -i)"; }
 
@@ -65,50 +71,53 @@ arch_tag() {
   esac
 }
 
+have_go() {
+  local g v
+  g=$(command -v go 2>/dev/null); [ -z "$g" ] && g=/usr/local/go/bin/go
+  [ -x "$g" ] || return 1
+  v=$("$g" version 2>/dev/null | awk '{print $3}' | sed 's/^go//')
+  [ -n "$v" ] || return 1
+  [ "$(printf '%s\n%s\n' "$GO_MIN" "$v" | sort -V | head -1)" = "$GO_MIN" ]
+}
+
+persist_path() {
+  grep -q '/usr/local/go/bin' /etc/profile 2>/dev/null || \
+    echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
+}
+
 ensure_go() {
-  if command -v go >/dev/null 2>&1; then
-    local have; have=$(go version | awk '{print $3}' | sed 's/go//')
-    if [ "$(printf '%s\n%s\n' "$GO_MIN" "$have" | sort -V | head -1)" = "$GO_MIN" ]; then
-      ok "go $have already installed"; return
-    fi
-    warn "go $have is older than $GO_MIN, installing a newer toolchain"
-  fi
-  local ver a url
-  ver=$(curl -fsSL https://go.dev/VERSION?m=text 2>/dev/null | head -1)
-  [ -z "$ver" ] && ver="go1.22.5"
-  a=$(arch_tag); url="https://go.dev/dl/${ver}.linux-${a}.tar.gz"
-  info "downloading $ver"
-  curl -fsSL "$url" -o /tmp/go.tgz || die "could not download the Go toolchain"
-  rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm -f /tmp/go.tgz
   export PATH=$PATH:/usr/local/go/bin
-  grep -q '/usr/local/go/bin' /etc/profile 2>/dev/null || echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
-  ok "go installed"
-}
+  if have_go; then ok "using $(go version | awk '{print $3}')"; return; fi
 
-bin_version() { # prints the version, or nothing if $BIN is not our binary
-  [ -x "$BIN" ] || return 1
-  local v; v=$("$BIN" -version 2>/dev/null | head -1)
-  case "$v" in bomalo\ *) echo "$v" ;; *) return 1 ;; esac
-}
+  local ver a url
+  ver=$(curl -fsSL --max-time 10 "https://go.dev/VERSION?m=text" 2>/dev/null | head -1 | tr -d '[:space:]')
+  [ -z "$ver" ] && ver="go1.22.5"
+  a=$(arch_tag)
 
-stop_legacy() {
-  bin_version >/dev/null 2>&1 && return   # already our binary
-  [ -x "$BIN" ] || return
-  warn "an older bomalo (the iptables/bash version) is installed at $BIN"
-  local units
-  units=$(systemctl list-units --all --plain --no-legend 2>/dev/null \
-          | awk '{print $1}' | grep -E '^(bomalo|tunnel)' | grep -v '^bomalo.service$')
-  if [ -n "$units" ]; then
-    echo "   ${D}stopping legacy services: $(echo "$units" | tr '\n' ' ')${N}"
-    for u in $units; do systemctl disable --now "$u" >/dev/null 2>&1; done
-  fi
-  if iptables -t nat -S PREROUTING 2>/dev/null | grep -q 'DNAT'; then
-    warn "old DNAT rules are still present in iptables:"
-    iptables -t nat -S PREROUTING | grep DNAT | sed 's/^/     /'
-    echo "   ${D}remove them one by one with: iptables -t nat -D PREROUTING <n>${N}"
-    echo "   ${D}leave them in place and they will hijack the ports before the tunnel sees them${N}"
-  fi
-  cp -f "$BIN" "${BIN}.legacy.bak" 2>/dev/null && echo "   ${D}old script kept at ${BIN}.legacy.bak${N}"
+  for url in "https://go.dev/dl/${ver}.linux-${a}.tar.gz" \
+             "https://dl.google.com/go/${ver}.linux-${a}.tar.gz"; do
+    info "downloading $ver"
+    if curl -fsSL --max-time 600 "$url" -o /tmp/go.tgz && [ -s /tmp/go.tgz ]; then
+      rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm -f /tmp/go.tgz
+      export PATH=$PATH:/usr/local/go/bin
+      if have_go; then ok "go installed"; persist_path; return; fi
+    fi
+    rm -f /tmp/go.tgz
+  done
+
+  # Google's download hosts are blocked from many Iranian networks; the
+  # distribution mirrors usually are not.
+  warn "the Go download servers are unreachable from this network"
+  info "falling back to the distribution package"
+  pkg_install golang-go >/dev/null 2>&1 || pkg_install golang >/dev/null 2>&1 || true
+  export PATH=$PATH:/usr/local/go/bin
+  if have_go; then ok "using $(go version | awk '{print $3}')"; return; fi
+
+  echo
+  die "no usable Go toolchain (need >= $GO_MIN).
+     Build the binary somewhere with working access instead:
+       git clone https://github.com/${REPO_USER}/${REPO_NAME} && cd ${REPO_NAME} && bash build.sh
+     then upload dist/* to a GitHub release tagged \"latest\" and run option 1 again."
 }
 
 install_binary() {
@@ -118,6 +127,7 @@ install_binary() {
   if curl -fsSL "${RELEASE}/bomalo-linux-${a}" -o /tmp/bomalo 2>/dev/null && [ -s /tmp/bomalo ]; then
     install -m 0755 /tmp/bomalo "$BIN"; rm -f /tmp/bomalo
     ok "installed $(bin_version)"
+    install_shortcut
     return
   fi
   warn "no release binary found, building from source"
@@ -133,6 +143,19 @@ install_binary() {
   ( cd "$SRC_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" . ) || die "build failed"
   chmod 0755 "$BIN"
   ok "built and installed $(bin_version)"
+  install_shortcut
+}
+
+install_shortcut() {
+  if [ -f ./install.sh ]; then
+    install -m 0755 ./install.sh /usr/local/bin/bomalo-menu 2>/dev/null
+  else
+    curl -fsSL "$RAW/install.sh" -o /usr/local/bin/bomalo-menu 2>/dev/null && \
+      chmod 0755 /usr/local/bin/bomalo-menu
+  fi
+  [ -x /usr/local/bin/bomalo-menu ] || return
+  ln -sf /usr/local/bin/bomalo-menu /usr/local/bin/bm
+  ok "type ${W}bm${N} or ${W}bomalo-menu${N} to open this menu again"
 }
 
 write_unit() {
@@ -337,48 +360,144 @@ show_status() {
   fi
 }
 
+
+edit_settings() {
+  [ -f "$CFG" ] || { warn "no configuration yet"; return; }
+  local mode; mode=$(jq -r .mode "$CFG")
+  while true; do
+    echo
+    echo "  ${BD}Current settings${N} ${D}($mode)${N}"
+    echo "    transport : $(jq -r .transport "$CFG")"
+    echo "    token     : $(jq -r .token "$CFG")"
+    echo "    sni       : $(jq -r .sni "$CFG")"
+    echo "    path      : $(jq -r .path "$CFG")"
+    if [ "$mode" = server ]; then
+      echo "    listen    : $(jq -r .listen "$CFG")"
+    else
+      echo "    server    : $(jq -r .server "$CFG")"
+      echo "    pool      : $(jq -r .pool "$CFG")"
+    fi
+    echo
+    echo "   ${B}1${N}) transport      ${B}2${N}) token         ${B}3${N}) SNI"
+    echo "   ${B}4${N}) HTTP path     ${B}5${N}) address/port   ${B}6${N}) pool ${D}(client)${N}"
+    echo "   ${B}0${N}) back"
+    local c v; read -r -p "  choice: " c
+    case "$c" in
+      1) v=$(pick_transport); set_field transport "$v" ;;
+      2) v=$(ask "  new token" ""); [ -n "$v" ] && set_field token "$v" ;;
+      3) v=$(ask "  new SNI" "www.bing.com"); set_field sni "$v" ;;
+      4) v=$(ask "  new path" "/tunnel"); set_field path "$v" ;;
+      5) if [ "$mode" = server ]; then
+           v=$(ask "  new tunnel port" 8443); set_field listen "0.0.0.0:$v"; open_port "$v" tcp
+         else
+           v=$(ask "  Iran server ip:port" "$(jq -r .server "$CFG")"); set_field server "$v"
+         fi ;;
+      6) [ "$mode" = client ] || { warn "client only"; continue; }
+         v=$(ask "  warm connections" 8)
+         local tmp; tmp=$(jq --argjson p "$v" '.pool=$p' "$CFG") && echo "$tmp" | jq . > "$CFG"
+         ok "pool = $v" ;;
+      0) break ;;
+      *) warn "invalid choice" ;;
+    esac
+  done
+  echo
+  warn "transport, token, SNI and path must match on BOTH servers"
+  restart_service
+}
+
+set_field() { # set_field <key> <value>
+  local tmp
+  tmp=$(jq --arg k "$1" --arg v "$2" '.[$k]=$v' "$CFG") || { warn "edit failed"; return; }
+  echo "$tmp" | jq . > "$CFG"
+  ok "$1 = $2"
+}
+
+CRON=/etc/cron.d/bomalo
+
+watchdog() {
+  command -v crontab >/dev/null 2>&1 || pkg_install cron >/dev/null 2>&1
+  while true; do
+    echo
+    echo "  ${BD}Watchdog${N}  ${D}current:${N} $( [ -f "$CRON" ] && echo "${G}enabled${N}" || echo "${D}disabled${N}" )"
+    echo "   ${B}1${N}) check every 5 minutes, restart if the service is down"
+    echo "   ${B}2${N}) the same, plus a daily restart at 04:00"
+    echo "   ${B}3${N}) disable"
+    echo "   ${B}0${N}) back"
+    local c; read -r -p "  choice: " c
+    case "$c" in
+      1) write_cron 0 ;;
+      2) write_cron 1 ;;
+      3) rm -f "$CRON"; ok "watchdog disabled" ;;
+      0) break ;;
+      *) warn "invalid choice" ;;
+    esac
+  done
+}
+
+write_cron() { # write_cron <daily 0|1>
+  {
+    echo "# Bomalo Tunnel watchdog"
+    echo "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
+    echo "*/5 * * * * root systemctl is-active --quiet bomalo || systemctl restart bomalo"
+    [ "$1" = 1 ] && echo "0 4 * * * root systemctl restart bomalo"
+  } > "$CRON"
+  chmod 0644 "$CRON"
+  systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || true
+  ok "watchdog enabled"
+}
+
 uninstall() {
   read -r -p "  Remove Bomalo Tunnel completely? [y/N]: " a
   [[ "$a" =~ ^[Yy]$ ]] || return
   systemctl disable --now bomalo >/dev/null 2>&1
-  rm -f "$UNIT" "$BIN"; rm -rf "$CFG_DIR" "$SRC_DIR"
+  rm -f "$UNIT" "$BIN" "$CRON" /usr/local/bin/bomalo-menu /usr/local/bin/bm
+  rm -rf "$CFG_DIR" "$SRC_DIR"
   systemctl daemon-reload
   ok "removed"
 }
 
 menu() {
   while true; do
+    banner
+    local st ver
+    ver=$(bin_version || echo "not installed")
+    if systemctl is-active --quiet bomalo 2>/dev/null; then st="${G}running${N}"
+    elif [ -f "$CFG" ]; then st="${R}stopped${N}"
+    else st="${D}not configured${N}"; fi
+    echo "  ${W}$ver${N}   ${D}service:${N} $st$( [ -f "$CFG" ] && echo "   ${D}mode:${N} $(jq -r .mode "$CFG")" )"
+    echo "  ${D}--------------------------------------------------${N}"
+    echo "   ${G}1${N})  Install / update the binary"
+    echo "   ${B}2${N})  Set up this server as ${W}IRAN${N} side      ${D}(server)${N}"
+    echo "   ${B}3${N})  Set up this server as ${W}FOREIGN${N} side   ${D}(client)${N}"
+    echo "   ${M}4${N})  Add forwarded ports              ${D}(Iran side)${N}"
+    echo "   ${M}5${N})  Remove a forwarded port          ${D}(Iran side)${N}"
+    echo "   ${Y}6${N})  Edit settings                    ${D}(transport, token, SNI ...)${N}"
+    echo "   ${B}7${N})  Status and settings"
+    echo "   ${B}8${N})  Live logs"
+    echo "   ${B}9${N})  Restart service"
+    echo "   ${GLD}w${N})  Watchdog / cron"
+    echo "   ${RED}u${N})  Uninstall"
+    echo "   ${D}0${N})  Exit"
     echo
-    echo "  ${B}Bomalo Tunnel${N}  $(bin_version || echo 'not installed')"
-    echo "  ------------------------------------------"
-    echo "   1) Install / update the binary"
-    echo "   2) Set up this server as IRAN side (server)"
-    echo "   3) Set up this server as FOREIGN side (client)"
-    echo "   4) Add forwarded ports        (Iran side)"
-    echo "   5) Remove a forwarded port    (Iran side)"
-    echo "   6) Status and settings"
-    echo "   7) Live logs"
-    echo "   8) Restart service"
-    echo "   9) Uninstall"
-    echo "   0) Exit"
-    local c; read -r -p "  choice: " c
+    local c; read -r -p "  ${W}choice:${N} " c
     case "$c" in
-      1) install_binary ;;
-      2) [ -x "$BIN" ] || install_binary; setup_server ;;
-      3) [ -x "$BIN" ] || install_binary; setup_client ;;
-      4) add_forward; restart_service ;;
-      5) del_forward; restart_service ;;
-      6) show_status ;;
-      7) journalctl -u bomalo -f -n 50 ;;
-      8) restart_service ;;
-      9) uninstall ;;
-      0) exit 0 ;;
-      *) warn "invalid choice" ;;
+      1) install_binary; pause ;;
+      2) [ -x "$BIN" ] || install_binary; setup_server; pause ;;
+      3) [ -x "$BIN" ] || install_binary; setup_client; pause ;;
+      4) add_forward; restart_service; pause ;;
+      5) del_forward; restart_service; pause ;;
+      6) edit_settings; pause ;;
+      7) show_status; pause ;;
+      8) journalctl -u bomalo -f -n 50 ;;
+      9) restart_service; pause ;;
+      w|W) watchdog ;;
+      u|U) uninstall; pause ;;
+      0) clear 2>/dev/null; exit 0 ;;
+      *) warn "invalid choice"; sleep 1 ;;
     esac
   done
 }
 
 require_root
-banner
 ensure_deps
 menu

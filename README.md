@@ -1,4 +1,19 @@
-# Bomalo Tunnel
+<p align="center">
+  <img src="assets/logo.jpg" alt="Bomalo" width="190">
+</p>
+
+<p align="center">
+  <img src="banner.svg" alt="Bomalo Tunnel" width="100%">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/language-Go-00ADD8?style=flat-square&logo=go&logoColor=white">
+  <img src="https://img.shields.io/badge/dependencies-stdlib%20only-2ea44f?style=flat-square">
+  <img src="https://img.shields.io/badge/transport-TCP%20%7C%20TLS%20%7C%20WS%20%7C%20WSS-8957e5?style=flat-square">
+  <img src="https://img.shields.io/badge/inbound%20ports%20abroad-0-c8102e?style=flat-square">
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
+</p>
+
 
 A reverse tunnel that publishes a foreign VPN server through an Iran server.
 The foreign machine dials **out**, so it never needs an open inbound port and its
@@ -104,6 +119,7 @@ round-trip for bursty workloads; 8–32 is a sensible range.
 ## Commands
 
 ```bash
+bm                                       # open the management menu
 bomalo -config /etc/bomalo/config.json   # run in the foreground
 bomalo -check                            # validate the config
 bomalo -gen-token                        # print a new token
