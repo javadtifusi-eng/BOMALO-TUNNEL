@@ -85,12 +85,39 @@ ensure_go() {
   ok "go installed"
 }
 
+bin_version() { # prints the version, or nothing if $BIN is not our binary
+  [ -x "$BIN" ] || return 1
+  local v; v=$("$BIN" -version 2>/dev/null | head -1)
+  case "$v" in bomalo\ *) echo "$v" ;; *) return 1 ;; esac
+}
+
+stop_legacy() {
+  bin_version >/dev/null 2>&1 && return   # already our binary
+  [ -x "$BIN" ] || return
+  warn "an older bomalo (the iptables/bash version) is installed at $BIN"
+  local units
+  units=$(systemctl list-units --all --plain --no-legend 2>/dev/null \
+          | awk '{print $1}' | grep -E '^(bomalo|tunnel)' | grep -v '^bomalo.service$')
+  if [ -n "$units" ]; then
+    echo "   ${D}stopping legacy services: $(echo "$units" | tr '\n' ' ')${N}"
+    for u in $units; do systemctl disable --now "$u" >/dev/null 2>&1; done
+  fi
+  if iptables -t nat -S PREROUTING 2>/dev/null | grep -q 'DNAT'; then
+    warn "old DNAT rules are still present in iptables:"
+    iptables -t nat -S PREROUTING | grep DNAT | sed 's/^/     /'
+    echo "   ${D}remove them one by one with: iptables -t nat -D PREROUTING <n>${N}"
+    echo "   ${D}leave them in place and they will hijack the ports before the tunnel sees them${N}"
+  fi
+  cp -f "$BIN" "${BIN}.legacy.bak" 2>/dev/null && echo "   ${D}old script kept at ${BIN}.legacy.bak${N}"
+}
+
 install_binary() {
+  stop_legacy
   local a; a=$(arch_tag)
   info "looking for a prebuilt binary"
   if curl -fsSL "${RELEASE}/bomalo-linux-${a}" -o /tmp/bomalo 2>/dev/null && [ -s /tmp/bomalo ]; then
     install -m 0755 /tmp/bomalo "$BIN"; rm -f /tmp/bomalo
-    ok "installed $($BIN -version)"
+    ok "installed $(bin_version)"
     return
   fi
   warn "no release binary found, building from source"
@@ -105,7 +132,7 @@ install_binary() {
   fi
   ( cd "$SRC_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" . ) || die "build failed"
   chmod 0755 "$BIN"
-  ok "built and installed $($BIN -version)"
+  ok "built and installed $(bin_version)"
 }
 
 write_unit() {
@@ -322,7 +349,7 @@ uninstall() {
 menu() {
   while true; do
     echo
-    echo "  ${B}Bomalo Tunnel${N}  $( [ -x "$BIN" ] && $BIN -version 2>/dev/null || echo 'not installed' )"
+    echo "  ${B}Bomalo Tunnel${N}  $(bin_version || echo 'not installed')"
     echo "  ------------------------------------------"
     echo "   1) Install / update the binary"
     echo "   2) Set up this server as IRAN side (server)"
