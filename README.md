@@ -1,293 +1,186 @@
-# <img src="assets/banner.svg" width="100%" alt="Bomalo Tunnel">
+# Bomalo Tunnel
 
-<div align="center">
+A reverse tunnel that publishes a foreign VPN server through an Iran server.
+The foreign machine dials **out**, so it never needs an open inbound port and its
+IP is never contacted directly by users.
 
-**[English](#english)** | **[Русский](#russian)** | **[فارسی](#persian)**
+```
+VPN user ──► Iran VPS  :1194 / :500 / :4500 ...
+                 ▲
+                 │  one tunnel port (TLS / WSS), dialed out by the foreign VPS
+                 │
+             Foreign VPS ──► 127.0.0.1:1194  (vpn-ui / Xray / strongSwan / OpenVPN)
+```
 
-[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org)
-[![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
-[![Users](https://img.shields.io/badge/Users-1000%2B-orange?style=flat-square)](https://github.com/yourusername/bomalo-tunnel)
-[![Transports](https://img.shields.io/badge/Transports-6-blueviolet?style=flat-square)](#transports)
+* Iran server = `mode: server` — owns all public ports and the port map.
+* Foreign server = `mode: client` — keeps warm connections open and dials the local services.
+
+## Install (one line, on both servers)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/pashm/main/install.sh)
+```
+
+Then:
+
+1. On the **Iran** server choose `2`, note the token it prints, and add the ports you need.
+2. On the **foreign** server choose `3` and paste the Iran IP, port and token.
+
+## Protocol support
+
+| Service | Ports | Works |
+|---|---|---|
+| OpenVPN | TCP or UDP 1194 | yes |
+| L2TP/IPsec | UDP 500, 4500, 1701 | yes, over NAT-T |
+| IKEv2 | UDP 500, 4500 | yes, over NAT-T |
+| WireGuard | UDP 51820 | yes |
+| VLESS / VMess / Trojan / Xray | TCP 443 etc. | yes |
+| vpn-ui panel | TCP 8081 | yes |
+| SSH, HTTP, any TCP service | any | yes |
+
+Both TCP and UDP are carried. Because the relay rewrites addresses, IPsec peers
+detect a NAT between them and switch to NAT-T automatically, so ESP travels
+inside UDP 4500. Bare ESP (IP protocol 50) is *not* forwarded — that is a
+property of any userspace relay, not a bug.
+
+> Important: the port a service really listens on is not always the port shown
+> in an exported config. vpn-ui, for example, serves OpenVPN on **1194**
+> internally while its `externalProxy` value (8081) is only the public port
+> written into `.ovpn` files. Forward the real listen port.
+
+## Transports
+
+| Value | What it looks like on the wire |
+|---|---|
+| `tcp` | raw stream, fastest, no disguise |
+| `tls` | TLS 1.2+ with a self-signed certificate and a fake SNI |
+| `ws` | HTTP `Upgrade: websocket` handshake, then a raw stream |
+| `wss` | the same handshake inside TLS — best against DPI |
+
+Note on `ws`/`wss`: the handshake is a byte-accurate WebSocket upgrade, but the
+payload afterwards is a raw stream rather than RFC 6455 frames. That defeats
+passive DPI; it is not yet enough to sit behind a CDN or an nginx WebSocket
+proxy. Full framing is a later pass.
+
+## Configuration
+
+`/etc/bomalo/config.json` on the Iran server:
+
+```json
+{
+  "mode": "server",
+  "listen": "0.0.0.0:8443",
+  "transport": "wss",
+  "token": "8f3c...",
+  "sni": "www.bing.com",
+  "path": "/tunnel",
+  "forwards": [
+    { "name": "OpenVPN", "listen": "0.0.0.0:1194", "net": "udp", "target": "127.0.0.1:1194" },
+    { "name": "L2TP",    "listen": "0.0.0.0:4500", "net": "udp", "target": "127.0.0.1:4500" }
+  ]
+}
+```
+
+`target` is resolved **on the foreign server**, so `127.0.0.1` means "the VPN
+service running next to the client".
+
+On the foreign server:
+
+```json
+{
+  "mode": "client",
+  "server": "94.249.244.140:8443",
+  "transport": "wss",
+  "token": "8f3c...",
+  "sni": "www.bing.com",
+  "path": "/tunnel",
+  "pool": 8
+}
+```
+
+`pool` is how many connections are kept warm. Raising it removes the dial
+round-trip for bursty workloads; 8–32 is a sensible range.
+
+## Commands
+
+```bash
+bomalo -config /etc/bomalo/config.json   # run in the foreground
+bomalo -check                            # validate the config
+bomalo -gen-token                        # print a new token
+systemctl restart bomalo
+journalctl -u bomalo -f
+```
+
+## Building manually
+
+```bash
+git clone https://github.com/javadtifusi-eng/pashm && cd pashm
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bomalo .
+```
+
+Standard library only — no third-party modules.
+
+---
+
+<div dir="rtl">
+
+# بومالو تانل
+
+یک تانل معکوس که سرور VPN خارج را از طریق سرور ایران منتشر می‌کند.
+سرور خارج خودش **به بیرون وصل می‌شود**، بنابراین نیازی به پورت باز ورودی ندارد و
+کاربران هرگز مستقیم با آی‌پی آن تماس نمی‌گیرند.
+
+* سرور ایران = `mode: server` — همهٔ پورت‌های عمومی و نقشهٔ پورت‌ها اینجاست.
+* سرور خارج = `mode: client` — چند کانکشن آماده نگه می‌دارد و به سرویس‌های محلی وصل می‌شود.
+
+## نصب (یک خط، روی هر دو سرور)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/pashm/main/install.sh)
+```
+
+سپس:
+
+۱. روی سرور **ایران** گزینهٔ `2` را بزنید، توکنی که چاپ می‌شود را یادداشت کنید و پورت‌های لازم را اضافه کنید.
+۲. روی سرور **خارج** گزینهٔ `3` را بزنید و آی‌پی ایران، پورت و توکن را وارد کنید.
+
+## پشتیبانی از پروتکل‌ها
+
+OpenVPN (TCP/UDP)، L2TP/IPsec، IKEv2، WireGuard، VLESS/VMess/Trojan، پنل vpn-ui
+و هر سرویس TCP دیگر. هم TCP و هم UDP منتقل می‌شوند.
+
+چون رله آدرس‌ها را بازنویسی می‌کند، دو طرف IPsec وجود NAT را تشخیص می‌دهند و
+خودکار به NAT-T سوییچ می‌کنند؛ یعنی ESP داخل UDP 4500 عبور می‌کند. ESP خام
+(پروتکل ۵۰ در لایهٔ IP) منتقل نمی‌شود — این محدودیت هر رلهٔ فضای‌کاربر است.
+
+> نکتهٔ مهم: پورتی که سرویس واقعاً روی آن گوش می‌دهد همیشه همان پورت داخل کانفیگ
+> خروجی نیست. مثلاً vpn-ui سرویس OpenVPN را داخلی روی **1194** بالا می‌آورد و
+> مقدار `externalProxy` (یعنی 8081) فقط پورت عمومی داخل فایل `.ovpn` است.
+> باید پورت واقعی گوش‌دادن را فوروارد کنید.
+
+## ترنسپورت‌ها
+
+`tcp` سریع‌ترین و بدون استتار، `tls` با گواهی self-signed و SNI جعلی،
+`ws` دست‌دادن HTTP/WebSocket و `wss` همان دست‌دادن داخل TLS (بهترین حالت مقابل DPI).
+
+دربارهٔ `ws`/`wss`: دست‌دادن دقیقاً مطابق WebSocket است اما دادهٔ بعد از آن به‌صورت
+استریم خام منتقل می‌شود، نه فریم‌های RFC 6455. این کار DPI غیرفعال را دور می‌زند
+ولی هنوز برای عبور از CDN یا پراکسی WebSocket نginx کافی نیست. فریم‌بندی کامل در
+مرحلهٔ بعد اضافه می‌شود.
+
+## نکات پیکربندی
+
+فیلد `target` روی **سرور خارج** حل می‌شود، پس `127.0.0.1` یعنی سرویس VPN کنار
+همان کلاینت. مقدار `pool` تعداد کانکشن‌های آمادهٔ نگه‌داشته‌شده است؛ بازهٔ ۸ تا ۳۲
+منطقی است.
+
+## دستورها
+
+```bash
+bomalo -check        # بررسی صحت کانفیگ
+bomalo -gen-token    # ساخت توکن جدید
+systemctl restart bomalo
+journalctl -u bomalo -f
+```
 
 </div>
-
----
-
-<a name="english"></a>
-# 🇬🇧 English
-
-> **Next-Generation Reverse Tunnel Engine** — Smart, Adaptive, Invisible. Supports **1000+ concurrent users**.
-
-Bomalo Tunnel is a high-performance, multi-transport tunnel engine written in Go. It features **AI-powered transport selection**, **eBPF kernel acceleration**, **multi-path hybrid routing**, **adaptive DPI evasion**, and **enterprise-grade user authentication**.
-
-## ✨ Key Features
-
-| Feature | Description |
-|---------|-------------|
-| 🤖 **AI-Adaptive Transport** | Auto-switches between TCP/QUIC/WebRTC/WireGuard/KCP based on real-time metrics |
-| ⚡ **eBPF Acceleration** | Kernel-level socket redirect reduces latency by up to 40% |
-| 🕸️ **Edge Mesh** | Multi-node topology with automatic failover |
-| 🎭 **DPI Evasion** | Traffic mimicry, jitter injection, domain fronting |
-| 🔒 **Noise Protocol** | Modern lightweight encryption with perfect forward secrecy |
-| 👥 **User Management** | Token-based auth, IP whitelisting, rate limiting (1000+ users) |
-| 🧪 **Pre-Install Tests** | Mandatory connectivity tests before installation |
-| 📊 **Real-Time Dashboard** | WebSocket-based monitoring for all users and transports |
-
-## 🚀 Quick Start
-
-```bash
-# One-line install
-bash <(curl -fsSL https://raw.githubusercontent.com/yourusername/bomalo-tunnel/main/scripts/install.sh)
-
-# Interactive menu (auto-detects IP, tests DNS, tests both servers)
-sudo bomalo
-
-# Or direct setup
-sudo bomalo setup --role iran --ports 443,8080
-sudo bomalo setup --role kharej --iran-ip <IP>
-```
-
-## 🧪 Pre-Installation Testing (Mandatory)
-
-Bomalo **requires** passing network tests before installation:
-
-1. **Auto-detects** your public IP
-2. **Tests Google DNS** (8.8.8.8) for internet connectivity
-3. **Tests Iran ↔ Kharej** connection (ping + TCP)
-4. **Blocks installation** if any test fails
-
-## 👥 User Management (1000+ Users)
-
-During national internet restrictions, **only whitelisted users** can connect:
-
-```bash
-# Add authorized user
-bomalo user-add --name "John Doe" --email "john@example.com" --ips "1.2.3.4,5.6.7.8"
-
-# List all users
-bomalo user-list
-
-# Ban suspicious IP
-bomalo ban-ip --ip "10.0.0.1"
-```
-
-## 📡 Transports
-
-| Transport | Best For | DPI Resistance | Status |
-|-----------|----------|----------------|--------|
-| **TCP** | Baseline | Low | ✅ Complete |
-| **TCP+Noise** | Encrypted | Medium | ✅ Complete |
-| **QUIC** | Fast UDP networks | High | ✅ Complete |
-| **WebRTC** | NAT traversal | Very High | ✅ Complete |
-| **WireGuard** | Stealth mode | Very High | ✅ Complete |
-| **KCP+FEC** | Lossy routes, gaming | Medium | ✅ Complete |
-
-## 🔐 SSL Certificate
-
-During setup, Bomalo asks if you have a domain:
-- **Yes** → Auto-installs Certbot + Let's Encrypt
-- **No** → Falls back to IP-based tunnel (no SSL)
-
-## 🏗️ Architecture
-
-```
-User Traffic → Iran Server → Bomalo Engine → Best Transport → Kharej Server → Origin
-                    ↑                                              ↓
-               Auth Manager ←── Whitelist ───┘
-               AI Optimizer ←── Health Probes ───────────────────┘
-               Connection Pool (5000 max)
-```
-
----
-
-<a name="russian"></a>
-# 🇷🇺 Русский
-
-> **Туннельный движок нового поколения** — Умный, Адаптивный, Невидимый. Поддерживает **1000+ пользователей**.
-
-## ✨ Основные возможности
-
-| Функция | Описание |
-|---------|----------|
-| 🤖 **ИИ-Транспорт** | Автопереключение TCP/QUIC/WebRTC/WireGuard/KCP |
-| ⚡ **eBPF** | Ускорение на уровне ядра, -40% задержки |
-| 🕸️ **Edge Mesh** | Мульти-ноды с авто-отказоустойчивостью |
-| 🎭 **Обход DPI** | Маскировка трафика, джиттер-инъекции |
-| 🔒 **Noise Protocol** | Современное шифрование |
-| 👥 **Управление пользователями** | 1000+ пользователей с whitelist |
-| 🧪 **Тесты перед установкой** | Обязательные проверки связи |
-
-## 🚀 Быстрый старт
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yourusername/bomalo-tunnel/main/scripts/install.sh)
-sudo bomalo
-```
-
----
-
-<a name="persian"></a>
-# 🇮🇷 فارسی
-
-> **موتور تانل نسل جدید** — هوشمند، تطبیقی، نامرئی. پشتیبانی از **۱۰۰۰+ کاربر همزمان**.
-
-Bomalo Tunnel یک موتور تانل چند‌ترنسپورتی با کارایی بالا است که با Go نوشته شده. دارای **انتخابگر هوشمند ترنسپورت با AI**، **شتاب‌دهی eBPF کرنل**، **احراز هویت سطح سازمانی** و **فرار از DPI تطبیقی** است.
-
-## ✨ ویژگی‌های کلیدی
-
-| ویژگی | توضیحات |
-|-------|---------|
-| 🤖 **ترنسپورت AI** | جابجایی خودکار بین ۶ ترنسپورت بر اساس متریک لحظه‌ای |
-| ⚡ **eBPF** | شتاب‌دهی سطح کرنل، کاهش ۴۰٪ تاخیر |
-| 🕸️ **Edge Mesh** | توپولوژی چند‌گره با failover خودکار |
-| 🎭 **فرار DPI** | ماسک ترافیک، تزریق جیتتر، دامین فرانتینگ |
-| 🔒 **Noise Protocol** | رمزنگاری مدرن با Perfect Forward Secrecy |
-| 👥 **مدیریت کاربر** | احراز هویت توکن‌بیس، IP Whitelist، Rate Limiting |
-| 🧪 **تست قبل نصب** | تست‌های اجباری اتصال (DNS گوگل + Ping + TCP) |
-| 📊 **داشبورد لحظه‌ای** | مانیتورینگ WebSocket برای همه کاربران و ترنسپورت‌ها |
-
-## 🚀 شروع سریع
-
-```bash
-# نصب یک‌خطی
-bash <(curl -fsSL https://raw.githubusercontent.com/yourusername/bomalo-tunnel/main/scripts/install.sh)
-
-# منوی تعاملی (شناسایی خودکار IP، تست DNS، تست دو سرور)
-sudo bomalo
-
-# یا راه‌اندازی مستقیم
-sudo bomalo setup --role iran --ports 443,8080
-sudo bomalo setup --role kharej --iran-ip <IP>
-```
-
-## 🧪 تست اجباری قبل از نصب
-
-Bomalo **اجباری** تست شبکه را قبل نصب دارد:
-
-1. **شناسایی خودکار** IP عمومی
-2. **تست DNS گوگل** (8.8.8.8)
-3. **تست ایران ↔ خارج** (ping + TCP handshake)
-4. **مسدود کردن نصب** در صورت خطا
-
-## 👥 مدیریت کاربران (۱۰۰۰+ کاربر)
-
-در زمان نت ملی، **فقط کاربران لیست سفید** می‌توانند وصل شوند:
-
-```bash
-# اضافه کردن کاربر مجاز
-bomalo user-add --name "علی احمدی" --email "ali@example.com" --ips "1.2.3.4"
-
-# لیست کاربران
-bomalo user-list
-
-# بن کردن IP مشکوک
-bomalo ban-ip --ip "10.0.0.1"
-```
-
-## 🧠 ترنسپورت هوشمند
-
-```
-TCP (پایه) → QUIC (سریع) → WebRTC (UDP بسته) → WireGuard (مخفی) → KCP (گیمینگ)
-     ↑________________________________________________________________________|
-                    (حلقه خود‌ترمیم با AI Optimizer)
-```
-
-## 📡 ترنسپورت‌ها
-
-| ترنسپورت | بهترین برای | مقاومت DPI | وضعیت |
-|-----------|-------------|------------|-------|
-| **TCP** | سازگاری پایه | کم | ✅ کامل |
-| **TCP+Noise** | رمزنگاری شده | متوسط | ✅ کامل |
-| **QUIC** | شبکه‌های UDP‌دوست | بالا | ✅ کامل |
-| **WebRTC** | عبور از NAT | خیلی بالا | ✅ کامل |
-| **WireGuard** | حالت مخفی | خیلی بالا | ✅ کامل |
-| **KCP+FEC** | شبکه‌های lossy، گیمینگ | متوسط | ✅ کامل |
-
-## 🔐 گواهی SSL
-
-هنگام راه‌اندازی، Bomalo می‌پرسد دامنه دارید:
-- **بله** → نصب خودکار Certbot + Let's Encrypt
-- **خیر** → استفاده از IP (بدون SSL)
-
-## 🏗️ معماری
-
-```
-کاربر → سرور ایران → موتور Bomalo → بهترین ترنسپورت → سرور خارج → سرویس اصلی
-              ↑                                              ↓
-         Auth Manager ←── Whitelist ───┘  (فقط کاربران مجاز)
-         AI Optimizer ←── تست‌های سلامت ───────────────────┘
-         Connection Pool (حداکثر ۵۰۰۰ کانکشن)
-         Rate Limiter (۱۰۰۰ درخواست/ثانیه)
-```
-
-## 📦 ساختار پروژه
-
-```
-bomalo-tunnel/
-├── cmd/
-│   ├── bomalo/          # CLI دوزبانه با منوی تعاملی
-│   └── bomalod/         # Daemon
-├── internal/
-│   ├── tunnel/          # موتور اصلی (۱۰۰۰+ کاربر)
-│   ├── transport/       # ۶ ترنسپورت کامل
-│   │   ├── tcp.go       ✅ کامل
-│   │   ├── quic.go      ✅ کامل
-│   │   ├── webrtc.go    ✅ کامل (Pion)
-│   │   ├── wireguard.go ✅ کامل
-│   │   └── kcp.go       ✅ کامل (+FEC)
-│   ├── crypto/          # Noise Protocol Handshake
-│   ├── ai/              # بهینه‌ساز هوشمند
-│   ├── auth/            # احراز هویت + Rate Limiting
-│   ├── pool/            # Connection Pool (۵۰۰۰)
-│   ├── nettest/         # تست شبکه قبل نصب
-│   ├── ssl/             # Certbot + Let's Encrypt
-│   ├── i18n/            # دوزبانه EN/FA
-│   ├── ebpf/            # شتاب‌دهی کرنل
-│   ├── mesh/            # Edge Mesh
-│   ├── dpi/             # فرار از DPI
-│   ├── api/             # gRPC + REST
-│   ├── dashboard/       # WebSocket
-│   └── config/          # کانفیگ
-├── pkg/protocol/        # پروتکل باینری
-├── web/                 # React Dashboard
-├── assets/              # بنر متحرک SVG
-├── scripts/             # نصب یک‌خطی
-├── deploy/              # systemd, Docker
-└── ebpf/c/              # برنامه‌های eBPF
-```
-
-## 🖥️ دستورات CLI
-
-```bash
-bomalo                    # منوی تعاملی (پیش‌فرض)
-bomalo setup --role iran  # راه‌اندازی سرور ایران
-bomalo setup --role kharej # راه‌اندازی سرور خارج
-bomalo status             # وضعیت زنده تانل
-bomalo link-test          # تست لینک و پیشنهاد ترنسپورت
-bomalo optimize           # بهینه‌سازی کرنل (BBR, بافر)
-bomalo user-add           # اضافه کردن کاربر مجاز
-bomalo user-list          # لیست کاربران
-bomalo mesh join <token>  # پیوستن به Edge Mesh
-bomalo dashboard          # باز کردن پنل وب
-bomalo backup             # خروجی پشتیبان کامل
-```
-
-## 🛠️ ساخت از سورس
-
-```bash
-git clone https://github.com/yourusername/bomalo-tunnel.git
-cd bomalo-tunnel
-make build
-make test
-```
-
-## 📜 لایسنس
-
-MIT License
-
----
-
-<p align="center">
-  <b>Bomalo Tunnel</b> — Tunnel Smarter, Not Harder.<br>
-  Made with ❤️ for the open-source community.
-</p>
