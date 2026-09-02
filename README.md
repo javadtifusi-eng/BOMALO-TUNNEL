@@ -104,7 +104,7 @@ On the foreign server:
 ```json
 {
   "mode": "client",
-  "server": "94.249.244.140:8443",
+  "server": "IRAN_SERVER_IP:8443",
   "transport": "wss",
   "token": "8f3c...",
   "sni": "www.bing.com",

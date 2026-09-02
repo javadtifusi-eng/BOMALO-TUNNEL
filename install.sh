@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Bomalo Tunnel installer
-#   bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/pashm/main/install.sh)
+# Bomalo Tunnel installer / manager
+#   bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/BOMALO-TUNNEL/main/install.sh)
 set -uo pipefail
 
 REPO_USER="javadtifusi-eng"
@@ -10,23 +10,35 @@ RAW="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/${BRANCH}"
 RELEASE="https://github.com/${REPO_USER}/${REPO_NAME}/releases/latest/download"
 
 BIN=/usr/local/bin/bomalo
+MENU=/usr/local/bin/bomalo-menu
 CFG_DIR=/etc/bomalo
 CFG=$CFG_DIR/config.json
 UNIT=/etc/systemd/system/bomalo.service
+CRON=/etc/cron.d/bomalo
 SRC_DIR=/opt/bomalo-src
 GO_MIN=1.21
 
-R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; B=$'\e[36m'; D=$'\e[2m'; N=$'\e[0m'
-M=$'\e[35m'; W=$'\e[97m'; BD=$'\e[1m'; GLD=$'\e[38;5;179m'; RED=$'\e[38;5;167m'
+# palette: text is white, numbers are red, only "running" is green
+W=$'\e[97m'; R=$'\e[91m'; G=$'\e[92m'; BL=$'\e[94m'; D=$'\e[90m'; N=$'\e[0m'; BD=$'\e[1m'
 
-info() { echo "${B}==>${N} $*"; }
-ok()   { echo "${G} ok ${N} $*"; }
-warn() { echo "${Y} !! ${N} $*"; }
-die()  { echo "${R}fail${N} $*"; exit 1; }
+info() { echo "${W}==>${N} ${W}$*${N}"; }
+ok()   { echo "${G} ok ${N} ${W}$*${N}"; }
+warn() { echo "${R} !! ${N} ${W}$*${N}"; }
+die()  { echo "${R}fail${N} ${W}$*${N}"; exit 1; }
+
+cols() { local c; c=$(tput cols 2>/dev/null || echo 80); [ -n "$c" ] && echo "$c" || echo 80; }
 
 banner() {
   clear 2>/dev/null || true
-  printf '%s' "$GLD"
+  if [ "$(cols)" -lt 72 ]; then
+    printf '%s' "$R"
+    echo '  +--------------------------+'
+    echo '  |    B O M A L O           |'
+    echo '  |          T U N N E L     |'
+    echo '  +--------------------------+'
+    printf '%s' "$N"
+  else
+    printf '%s' "$R"
 cat <<'EOF'
   ____                        _         _____                       _
  | __ )  ___  _ __ ___   __ _| | ___   |_   _|   _ _ __  _ __   ___| |
@@ -34,12 +46,13 @@ cat <<'EOF'
  | |_) | (_) | | | | | | (_| | | (_) |   | || |_| | | | | | | |  __/ |
  |____/ \___/|_| |_| |_|\__,_|_|\___/    |_| \__,_|_| |_|_| |_|\___|_|
 EOF
-  printf '%s' "$N"
-  echo "        ${RED}reverse tunnel${N}  ${D}client-initiated · zero inbound ports${N}"
+    printf '%s' "$N"
+  fi
+  echo "  ${BL}reverse tunnel${N}  ${D}client-initiated${N}"
   echo
 }
 
-pause() { echo; read -r -p "  ${D}press Enter to continue${N} " _; }
+pause() { echo; read -r -p "  ${D}press Enter${N} " _; }
 
 require_root() { [ "$(id -u)" = 0 ] || die "run this script as root (sudo -i)"; }
 
@@ -58,18 +71,23 @@ ensure_deps() {
   command -v curl >/dev/null 2>&1 || need+=(curl)
   command -v tar  >/dev/null 2>&1 || need+=(tar)
   command -v jq   >/dev/null 2>&1 || need+=(jq)
-  [ ${#need[@]} -gt 0 ] && { info "installing dependencies: ${need[*]}"; pkg_install "${need[@]}"; }
+  if [ ${#need[@]} -gt 0 ]; then
+    info "installing dependencies: ${need[*]}"
+    pkg_install "${need[@]}"
+  fi
   command -v jq >/dev/null 2>&1 || die "jq is required and could not be installed"
 }
 
 arch_tag() {
   case "$(uname -m)" in
-    x86_64|amd64) echo amd64 ;;
+    x86_64|amd64)  echo amd64 ;;
     aarch64|arm64) echo arm64 ;;
-    armv7l) echo armv6l ;;
+    armv7l)        echo armv6l ;;
     *) die "unsupported architecture: $(uname -m)" ;;
   esac
 }
+
+# ------------------------------------------------------------------ toolchain
 
 have_go() {
   local g v
@@ -105,19 +123,53 @@ ensure_go() {
     rm -f /tmp/go.tgz
   done
 
-  # Google's download hosts are blocked from many Iranian networks; the
-  # distribution mirrors usually are not.
+  # Google's download hosts are blocked from many Iranian networks
   warn "the Go download servers are unreachable from this network"
   info "falling back to the distribution package"
   pkg_install golang-go >/dev/null 2>&1 || pkg_install golang >/dev/null 2>&1 || true
   export PATH=$PATH:/usr/local/go/bin
   if have_go; then ok "using $(go version | awk '{print $3}')"; return; fi
 
-  echo
-  die "no usable Go toolchain (need >= $GO_MIN).
-     Build the binary somewhere with working access instead:
-       git clone https://github.com/${REPO_USER}/${REPO_NAME} && cd ${REPO_NAME} && bash build.sh
-     then upload dist/* to a GitHub release tagged \"latest\" and run option 1 again."
+  die "no usable Go toolchain (need >= $GO_MIN). Build elsewhere with build.sh and
+     upload dist/* to a GitHub release tagged \"latest\", then run option 1 again."
+}
+
+# ------------------------------------------------------------------ binary
+
+bin_version() {
+  [ -x "$BIN" ] || return 1
+  local v; v=$("$BIN" -version 2>/dev/null | head -1)
+  case "$v" in bomalo\ *) echo "$v" ;; *) return 1 ;; esac
+}
+
+stop_legacy() {
+  bin_version >/dev/null 2>&1 && return
+  [ -x "$BIN" ] || return
+  warn "an older bomalo (the iptables/bash version) is installed at $BIN"
+  local units u
+  units=$(systemctl list-units --all --plain --no-legend 2>/dev/null \
+          | awk '{print $1}' | grep -E '^(bomalo|tunnel)' | grep -v '^bomalo.service$')
+  if [ -n "$units" ]; then
+    for u in $units; do systemctl disable --now "$u" >/dev/null 2>&1; done
+    echo "   ${D}stopped legacy services${N}"
+  fi
+  if iptables -t nat -S PREROUTING 2>/dev/null | grep -q 'DNAT'; then
+    warn "old DNAT rules are still present:"
+    iptables -t nat -S PREROUTING | grep DNAT | sed 's/^/     /'
+    echo "   ${D}remove them one by one: iptables -t nat -D PREROUTING <n>${N}"
+  fi
+  cp -f "$BIN" "${BIN}.legacy.bak" 2>/dev/null
+}
+
+install_shortcut() {
+  if [ -f ./install.sh ]; then
+    install -m 0755 ./install.sh "$MENU" 2>/dev/null
+  else
+    curl -fsSL "$RAW/install.sh" -o "$MENU" 2>/dev/null && chmod 0755 "$MENU"
+  fi
+  [ -x "$MENU" ] || return 1
+  ln -sf "$MENU" /usr/local/bin/bm
+  return 0
 }
 
 install_binary() {
@@ -127,36 +179,24 @@ install_binary() {
   if curl -fsSL "${RELEASE}/bomalo-linux-${a}" -o /tmp/bomalo 2>/dev/null && [ -s /tmp/bomalo ]; then
     install -m 0755 /tmp/bomalo "$BIN"; rm -f /tmp/bomalo
     ok "installed $(bin_version)"
-    install_shortcut
-    return
-  fi
-  warn "no release binary found, building from source"
-  ensure_go
-  export PATH=$PATH:/usr/local/go/bin
-  mkdir -p "$SRC_DIR"
-  if [ -f ./main.go ] && [ -f ./go.mod ]; then
-    cp ./main.go ./go.mod "$SRC_DIR/"
   else
-    curl -fsSL "$RAW/main.go" -o "$SRC_DIR/main.go" || die "could not download main.go"
-    curl -fsSL "$RAW/go.mod"  -o "$SRC_DIR/go.mod"  || die "could not download go.mod"
+    warn "no release binary found, building from source"
+    ensure_go
+    mkdir -p "$SRC_DIR"
+    if [ -f ./main.go ] && [ -f ./go.mod ]; then
+      cp ./main.go ./go.mod "$SRC_DIR/"
+    else
+      curl -fsSL "$RAW/main.go" -o "$SRC_DIR/main.go" || die "could not download main.go"
+      curl -fsSL "$RAW/go.mod"  -o "$SRC_DIR/go.mod"  || die "could not download go.mod"
+    fi
+    ( cd "$SRC_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" . ) || die "build failed"
+    chmod 0755 "$BIN"
+    ok "built and installed $(bin_version)"
   fi
-  ( cd "$SRC_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" . ) || die "build failed"
-  chmod 0755 "$BIN"
-  ok "built and installed $(bin_version)"
-  install_shortcut
+  install_shortcut && ok "type ${R}bm${N}${W} to open this menu again"
 }
 
-install_shortcut() {
-  if [ -f ./install.sh ]; then
-    install -m 0755 ./install.sh /usr/local/bin/bomalo-menu 2>/dev/null
-  else
-    curl -fsSL "$RAW/install.sh" -o /usr/local/bin/bomalo-menu 2>/dev/null && \
-      chmod 0755 /usr/local/bin/bomalo-menu
-  fi
-  [ -x /usr/local/bin/bomalo-menu ] || return
-  ln -sf /usr/local/bin/bomalo-menu /usr/local/bin/bm
-  ok "type ${W}bm${N} or ${W}bomalo-menu${N} to open this menu again"
-}
+# ------------------------------------------------------------------ service
 
 write_unit() {
   cat > "$UNIT" <<EOF
@@ -179,7 +219,7 @@ EOF
   systemctl daemon-reload
 }
 
-save_cfg() { # save_cfg <json>
+save_cfg() {
   mkdir -p "$CFG_DIR"
   echo "$1" | jq . > "$CFG" || die "could not write config"
   chmod 600 "$CFG"
@@ -190,10 +230,11 @@ restart_service() {
   systemctl enable bomalo >/dev/null 2>&1
   systemctl restart bomalo
   sleep 1
-  systemctl is-active --quiet bomalo && ok "service is running" || warn "service failed, check option 6 (logs)"
+  if systemctl is-active --quiet bomalo; then ok "service is running"
+  else warn "service failed - check the logs in Manage"; fi
 }
 
-open_port() { # open_port <port> <tcp|udp>
+open_port() {
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
     ufw allow "$1/$2" >/dev/null 2>&1 && echo "   ${D}ufw: opened $1/$2${N}"
   elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
@@ -202,138 +243,72 @@ open_port() { # open_port <port> <tcp|udp>
   fi
 }
 
-ask() { # ask <prompt> <default> -> echoes answer
+ask() {
   local p="$1" d="${2:-}" a
-  if [ -n "$d" ]; then read -r -p "$p [$d]: " a; echo "${a:-$d}"
-  else read -r -p "$p: " a; echo "$a"; fi
+  if [ -n "$d" ]; then read -r -p "  ${W}$p${N} [$d]: " a; echo "${a:-$d}"
+  else read -r -p "  ${W}$p${N}: " a; echo "$a"; fi
 }
 
 pick_transport() {
-  echo >&2
-  echo "  Transport:" >&2
-  echo "    1) tls   - TLS with a self-signed certificate (recommended)" >&2
-  echo "    2) wss   - HTTP/WebSocket upgrade inside TLS (best against DPI)" >&2
-  echo "    3) ws    - plain HTTP/WebSocket upgrade" >&2
-  echo "    4) tcp   - raw TCP, fastest, no disguise" >&2
-  local c; read -r -p "  choice [1]: " c
+  {
+    echo
+    echo "  ${W}Transport:${N}"
+    echo "    ${R}1${N}) ${W}tls${N}   TLS with a self-signed certificate"
+    echo "    ${R}2${N}) ${W}wss${N}   HTTP/WebSocket upgrade inside TLS  ${D}(best against DPI)${N}"
+    echo "    ${R}3${N}) ${W}ws${N}    plain HTTP/WebSocket upgrade"
+    echo "    ${R}4${N}) ${W}tcp${N}   raw TCP, fastest, no disguise"
+  } >&2
+  local c; read -r -p "  ${W}choice${N} [1]: " c
   case "${c:-1}" in 2) echo wss ;; 3) echo ws ;; 4) echo tcp ;; *) echo tls ;; esac
 }
 
-# ------------------------------------------------------------------ server
+# ------------------------------------------------------------------ setup
 
 setup_server() {
   echo
   info "Configuring this machine as the IRAN server (public entry point)"
-  local port token transport sni path cfg
-  port=$(ask "  Tunnel port (the foreign server dials this)" 8443)
-  token=$(ask "  Shared token (leave empty to generate)" "")
-  [ -z "$token" ] && token=$($BIN -gen-token)
+  local port token transport sni path cfg ip
+  port=$(ask "Tunnel port (the foreign server dials this)" 8443)
+  token=$(ask "Shared token (leave empty to generate)" "")
+  [ -z "$token" ] && token=$("$BIN" -gen-token)
   transport=$(pick_transport)
-  sni=$(ask "  SNI / fake hostname" "www.bing.com")
-  path=$(ask "  HTTP path (ws/wss only)" "/tunnel")
+  sni=$(ask "SNI / fake hostname" "www.bing.com")
+  path=$(ask "HTTP path (ws/wss only)" "/tunnel")
 
   cfg=$(jq -n --arg l "0.0.0.0:$port" --arg t "$transport" --arg tok "$token" \
               --arg s "$sni" --arg p "$path" \
         '{mode:"server", listen:$l, transport:$t, token:$tok, sni:$s, path:$p, forwards:[]}')
   save_cfg "$cfg"
   open_port "$port" tcp
+  ip=$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo YOUR_IRAN_IP)
   echo
   ok "server configured"
   echo
-  echo "  ${Y}Copy these values to the foreign server:${N}"
-  echo "    server    : $(curl -fsSL --max-time 4 https://api.ipify.org 2>/dev/null || echo YOUR_IRAN_IP):$port"
-  echo "    token     : $token"
-  echo "    transport : $transport"
-  echo "    sni       : $sni"
-  echo "    path      : $path"
+  echo "  ${W}Copy these values to the foreign server:${N}"
+  echo "    server    : ${W}$ip:$port${N}"
+  echo "    token     : ${W}$token${N}"
+  echo "    transport : ${W}$transport${N}"
+  echo "    sni       : ${W}$sni${N}"
+  echo "    path      : ${W}$path${N}"
   echo
-  read -r -p "  Add forwarded ports now? [Y/n]: " a
+  read -r -p "  ${W}Add forwarded ports now?${N} [Y/n]: " a
   [[ "${a:-y}" =~ ^[Yy]?$ ]] && add_forward
   restart_service
 }
 
-add_forward() {
-  [ -f "$CFG" ] || { warn "no config yet, run option 2 first"; return; }
-  [ "$(jq -r .mode "$CFG")" = "server" ] || { warn "forwards are configured on the Iran server only"; return; }
-  while true; do
-    echo
-    echo "  Which service do you want to publish on this Iran server?"
-    echo "    1) OpenVPN            UDP 1194"
-    echo "    2) OpenVPN            TCP 1194"
-    echo "    3) L2TP/IPsec         UDP 500, 4500, 1701"
-    echo "    4) IKEv2              UDP 500, 4500"
-    echo "    5) WireGuard          UDP 51820"
-    echo "    6) VLESS / Xray       TCP 443"
-    echo "    7) vpn-ui panel       TCP 8081"
-    echo "    8) Custom port"
-    echo "    0) Done"
-    local c; read -r -p "  choice: " c
-    case "$c" in
-      1) add_entry "OpenVPN" udp 1194 ;;
-      2) add_entry "OpenVPN" tcp 1194 ;;
-      3) add_entry "L2TP-IKE" udp 500; add_entry "L2TP-NATT" udp 4500; add_entry "L2TP" udp 1701
-         echo "   ${D}note: IPsec ESP is carried inside UDP 4500 (NAT-T), which is what this relay forwards${N}" ;;
-      4) add_entry "IKEv2" udp 500; add_entry "IKEv2-NATT" udp 4500 ;;
-      5) add_entry "WireGuard" udp 51820 ;;
-      6) add_entry "VLESS" tcp 443 ;;
-      7) add_entry "vpn-ui" tcp 8081 ;;
-      8) local n p pr t
-         n=$(ask "   name" "custom")
-         pr=$(ask "   protocol (tcp/udp)" tcp)
-         p=$(ask "   public port on this server" "")
-         t=$(ask "   port on the foreign server" "$p")
-         add_entry "$n" "$pr" "$p" "$t" ;;
-      0) break ;;
-      *) warn "invalid choice" ;;
-    esac
-  done
-  list_forwards
-}
-
-add_entry() { # add_entry <name> <tcp|udp> <public port> [remote port]
-  local name="$1" proto="$2" port="$3" rport="${4:-$3}"
-  [ -z "$port" ] && { warn "port is required"; return; }
-  local tmp
-  tmp=$(jq --arg n "$name" --arg p "$proto" \
-           --arg l "0.0.0.0:$port" --arg t "127.0.0.1:$rport" \
-        '.forwards |= (map(select(.listen != $l or .net != $p)) + [{name:$n, listen:$l, net:$p, target:$t}])' "$CFG")
-  echo "$tmp" | jq . > "$CFG"
-  open_port "$port" "$proto"
-  ok "$proto $port -> 127.0.0.1:$rport ($name)"
-}
-
-list_forwards() {
-  [ -f "$CFG" ] || { warn "no config"; return; }
-  echo
-  echo "  Current forwards:"
-  jq -r '.forwards[]? | "    \(.net)\t\(.listen)\t->  \(.target)\t\(.name // "")"' "$CFG" | expand -t 12
-  echo
-}
-
-del_forward() {
-  list_forwards
-  local l; l=$(ask "  listen address to remove (e.g. 0.0.0.0:1194)" "")
-  [ -z "$l" ] && return
-  local tmp; tmp=$(jq --arg l "$l" '.forwards |= map(select(.listen != $l))' "$CFG")
-  echo "$tmp" | jq . > "$CFG"
-  ok "removed $l"
-}
-
-# ------------------------------------------------------------------ client
-
 setup_client() {
   echo
-  info "Configuring this machine as the FOREIGN server (exit node, runs the VPN panel)"
+  info "Configuring this machine as the FOREIGN server (exit node)"
   local ip port token transport sni path pool cfg
-  ip=$(ask "  Iran server IP" "")
+  ip=$(ask "Iran server IP" "")
   [ -z "$ip" ] && { warn "IP is required"; return; }
-  port=$(ask "  Tunnel port" 8443)
-  token=$(ask "  Shared token (from the Iran server)" "")
+  port=$(ask "Tunnel port" 8443)
+  token=$(ask "Shared token (from the Iran server)" "")
   [ -z "$token" ] && { warn "token is required"; return; }
   transport=$(pick_transport)
-  sni=$(ask "  SNI / fake hostname (must match the Iran server)" "www.bing.com")
-  path=$(ask "  HTTP path (ws/wss only)" "/tunnel")
-  pool=$(ask "  Warm connections to keep open" 8)
+  sni=$(ask "SNI (must match the Iran server)" "www.bing.com")
+  path=$(ask "HTTP path (ws/wss only)" "/tunnel")
+  pool=$(ask "Warm connections to keep open" 8)
 
   cfg=$(jq -n --arg s "$ip:$port" --arg t "$transport" --arg tok "$token" \
               --arg sn "$sni" --arg p "$path" --argjson pool "$pool" \
@@ -344,58 +319,120 @@ setup_client() {
   restart_service
 }
 
-# ------------------------------------------------------------------ misc
+# ------------------------------------------------------------------ forwards
 
-show_status() {
-  echo
-  systemctl status bomalo --no-pager -l 2>/dev/null | head -15
-  echo
-  if [ -f "$CFG" ]; then
-    echo "  mode      : $(jq -r .mode "$CFG")"
-    echo "  transport : $(jq -r .transport "$CFG")"
-    echo "  token     : $(jq -r .token "$CFG")"
-    [ "$(jq -r .mode "$CFG")" = "server" ] && list_forwards
-  else
-    warn "no configuration at $CFG"
+add_entry() {
+  local name="$1" proto="$2" port="$3" rport="${4:-$3}" tmp
+  [ -z "$port" ] && { warn "port is required"; return; }
+  if [ "$port" = 22 ] || [ "$port" = "$(jq -r '.listen // ""' "$CFG" | sed 's/.*://')" ]; then
+    warn "refusing to forward port $port - it would break SSH or the tunnel itself"
+    return
   fi
+  tmp=$(jq --arg n "$name" --arg p "$proto" \
+           --arg l "0.0.0.0:$port" --arg t "127.0.0.1:$rport" \
+        '.forwards |= (map(select(.listen != $l or .net != $p)) + [{name:$n, listen:$l, net:$p, target:$t}])' "$CFG")
+  echo "$tmp" | jq . > "$CFG"
+  open_port "$port" "$proto"
+  ok "$proto $port -> 127.0.0.1:$rport ($name)"
 }
 
+add_forward() {
+  [ -f "$CFG" ] || { warn "no config yet, run option 2 first"; return; }
+  [ "$(jq -r .mode "$CFG")" = "server" ] || { warn "forwards belong on the Iran server"; return; }
+  while true; do
+    echo
+    echo "  ${W}Which service should this Iran server publish?${N}"
+    echo "    ${R}1${N}) ${W}OpenVPN${N}         UDP 1194"
+    echo "    ${R}2${N}) ${W}OpenVPN${N}         TCP 1194"
+    echo "    ${R}3${N}) ${W}L2TP/IPsec${N}      UDP 500, 4500, 1701"
+    echo "    ${R}4${N}) ${W}IKEv2${N}           UDP 500, 4500"
+    echo "    ${R}5${N}) ${W}WireGuard${N}       UDP 51820"
+    echo "    ${R}6${N}) ${W}VLESS / Xray${N}    TCP 443"
+    echo "    ${R}7${N}) ${W}vpn-ui panel${N}    TCP 8081"
+    echo "    ${R}8${N}) ${W}Custom port${N}"
+    echo "    ${R}0${N}) ${W}Done${N}"
+    local c n p pr t; read -r -p "  ${W}choice:${N} " c
+    case "$c" in
+      1) add_entry "OpenVPN" udp 1194 ;;
+      2) add_entry "OpenVPN" tcp 1194 ;;
+      3) add_entry "L2TP-IKE" udp 500; add_entry "L2TP-NATT" udp 4500; add_entry "L2TP" udp 1701 ;;
+      4) add_entry "IKEv2" udp 500; add_entry "IKEv2-NATT" udp 4500 ;;
+      5) add_entry "WireGuard" udp 51820 ;;
+      6) add_entry "VLESS" tcp 443 ;;
+      7) add_entry "vpn-ui" tcp 8081 ;;
+      8) n=$(ask "  name" "custom")
+         pr=$(ask "  protocol (tcp/udp)" tcp)
+         p=$(ask "  public port on THIS server" "")
+         t=$(ask "  port on the FOREIGN server" "$p")
+         add_entry "$n" "$pr" "$p" "$t" ;;
+      0) break ;;
+      *) warn "invalid choice" ;;
+    esac
+  done
+  list_forwards
+}
+
+list_forwards() {
+  [ -f "$CFG" ] || return
+  echo
+  echo "  ${W}Current forwards:${N}"
+  jq -r '.forwards[]? | "    \(.net)\t\(.listen)\t->  \(.target)\t\(.name // "")"' "$CFG" | expand -t 12
+  echo
+}
+
+del_forward() {
+  [ -f "$CFG" ] || { warn "no config"; return; }
+  list_forwards
+  local l tmp; l=$(ask "listen address to remove (e.g. 0.0.0.0:1194)" "")
+  [ -z "$l" ] && return
+  tmp=$(jq --arg l "$l" '.forwards |= map(select(.listen != $l))' "$CFG")
+  echo "$tmp" | jq . > "$CFG"
+  ok "removed $l"
+}
+
+# ------------------------------------------------------------------ manage
+
+set_field() {
+  local tmp
+  tmp=$(jq --arg k "$1" --arg v "$2" '.[$k]=$v' "$CFG") || { warn "edit failed"; return; }
+  echo "$tmp" | jq . > "$CFG"
+  ok "$1 = $2"
+}
 
 edit_settings() {
   [ -f "$CFG" ] || { warn "no configuration yet"; return; }
   local mode; mode=$(jq -r .mode "$CFG")
   while true; do
     echo
-    echo "  ${BD}Current settings${N} ${D}($mode)${N}"
-    echo "    transport : $(jq -r .transport "$CFG")"
-    echo "    token     : $(jq -r .token "$CFG")"
-    echo "    sni       : $(jq -r .sni "$CFG")"
-    echo "    path      : $(jq -r .path "$CFG")"
+    echo "  ${W}${BD}Settings${N} ${D}($mode)${N}"
+    echo "    transport : ${W}$(jq -r .transport "$CFG")${N}"
+    echo "    token     : ${W}$(jq -r .token "$CFG")${N}"
+    echo "    sni       : ${W}$(jq -r .sni "$CFG")${N}"
+    echo "    path      : ${W}$(jq -r .path "$CFG")${N}"
     if [ "$mode" = server ]; then
-      echo "    listen    : $(jq -r .listen "$CFG")"
+      echo "    listen    : ${W}$(jq -r .listen "$CFG")${N}"
     else
-      echo "    server    : $(jq -r .server "$CFG")"
-      echo "    pool      : $(jq -r .pool "$CFG")"
+      echo "    server    : ${W}$(jq -r .server "$CFG")${N}"
+      echo "    pool      : ${W}$(jq -r .pool "$CFG")${N}"
     fi
     echo
-    echo "   ${B}1${N}) transport      ${B}2${N}) token         ${B}3${N}) SNI"
-    echo "   ${B}4${N}) HTTP path     ${B}5${N}) address/port   ${B}6${N}) pool ${D}(client)${N}"
-    echo "   ${B}0${N}) back"
-    local c v; read -r -p "  choice: " c
+    echo "   ${R}1${N}) ${W}transport${N}    ${R}2${N}) ${W}token${N}    ${R}3${N}) ${W}SNI${N}    ${R}4${N}) ${W}path${N}"
+    echo "   ${R}5${N}) ${W}address / port${N}                 ${R}6${N}) ${W}pool${N} ${D}(client)${N}"
+    echo "   ${R}0${N}) ${W}back${N}"
+    local c v tmp; read -r -p "  ${W}choice:${N} " c
     case "$c" in
       1) v=$(pick_transport); set_field transport "$v" ;;
-      2) v=$(ask "  new token" ""); [ -n "$v" ] && set_field token "$v" ;;
-      3) v=$(ask "  new SNI" "www.bing.com"); set_field sni "$v" ;;
-      4) v=$(ask "  new path" "/tunnel"); set_field path "$v" ;;
+      2) v=$(ask "new token" ""); [ -n "$v" ] && set_field token "$v" ;;
+      3) v=$(ask "new SNI" "www.bing.com"); set_field sni "$v" ;;
+      4) v=$(ask "new path" "/tunnel"); set_field path "$v" ;;
       5) if [ "$mode" = server ]; then
-           v=$(ask "  new tunnel port" 8443); set_field listen "0.0.0.0:$v"; open_port "$v" tcp
+           v=$(ask "new tunnel port" 8443); set_field listen "0.0.0.0:$v"; open_port "$v" tcp
          else
-           v=$(ask "  Iran server ip:port" "$(jq -r .server "$CFG")"); set_field server "$v"
+           v=$(ask "Iran server ip:port" "$(jq -r .server "$CFG")"); set_field server "$v"
          fi ;;
       6) [ "$mode" = client ] || { warn "client only"; continue; }
-         v=$(ask "  warm connections" 8)
-         local tmp; tmp=$(jq --argjson p "$v" '.pool=$p' "$CFG") && echo "$tmp" | jq . > "$CFG"
-         ok "pool = $v" ;;
+         v=$(ask "warm connections" 8)
+         tmp=$(jq --argjson p "$v" '.pool=$p' "$CFG") && echo "$tmp" | jq . > "$CFG" && ok "pool = $v" ;;
       0) break ;;
       *) warn "invalid choice" ;;
     esac
@@ -405,36 +442,21 @@ edit_settings() {
   restart_service
 }
 
-set_field() { # set_field <key> <value>
-  local tmp
-  tmp=$(jq --arg k "$1" --arg v "$2" '.[$k]=$v' "$CFG") || { warn "edit failed"; return; }
-  echo "$tmp" | jq . > "$CFG"
-  ok "$1 = $2"
+show_status() {
+  echo
+  systemctl status bomalo --no-pager -l 2>/dev/null | head -12
+  echo
+  if [ -f "$CFG" ]; then
+    echo "  mode      : ${W}$(jq -r .mode "$CFG")${N}"
+    echo "  transport : ${W}$(jq -r .transport "$CFG")${N}"
+    echo "  token     : ${W}$(jq -r .token "$CFG")${N}"
+    [ "$(jq -r .mode "$CFG")" = "server" ] && list_forwards
+  else
+    warn "no configuration at $CFG"
+  fi
 }
 
-CRON=/etc/cron.d/bomalo
-
-watchdog() {
-  command -v crontab >/dev/null 2>&1 || pkg_install cron >/dev/null 2>&1
-  while true; do
-    echo
-    echo "  ${BD}Watchdog${N}  ${D}current:${N} $( [ -f "$CRON" ] && echo "${G}enabled${N}" || echo "${D}disabled${N}" )"
-    echo "   ${B}1${N}) check every 5 minutes, restart if the service is down"
-    echo "   ${B}2${N}) the same, plus a daily restart at 04:00"
-    echo "   ${B}3${N}) disable"
-    echo "   ${B}0${N}) back"
-    local c; read -r -p "  choice: " c
-    case "$c" in
-      1) write_cron 0 ;;
-      2) write_cron 1 ;;
-      3) rm -f "$CRON"; ok "watchdog disabled" ;;
-      0) break ;;
-      *) warn "invalid choice" ;;
-    esac
-  done
-}
-
-write_cron() { # write_cron <daily 0|1>
+write_cron() {
   {
     echo "# Bomalo Tunnel watchdog"
     echo "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
@@ -446,38 +468,84 @@ write_cron() { # write_cron <daily 0|1>
   ok "watchdog enabled"
 }
 
+watchdog() {
+  command -v crontab >/dev/null 2>&1 || pkg_install cron >/dev/null 2>&1
+  while true; do
+    echo
+    echo "  ${W}${BD}Watchdog${N}  ${D}current:${N} $( [ -f "$CRON" ] && echo "${G}enabled${N}" || echo "${W}disabled${N}" )"
+    echo "   ${R}1${N}) ${W}check every 5 minutes, restart if the service is down${N}"
+    echo "   ${R}2${N}) ${W}the same, plus a daily restart at 04:00${N}"
+    echo "   ${R}3${N}) ${W}disable${N}"
+    echo "   ${R}0${N}) ${W}back${N}"
+    local c; read -r -p "  ${W}choice:${N} " c
+    case "$c" in
+      1) write_cron 0 ;;
+      2) write_cron 1 ;;
+      3) rm -f "$CRON"; ok "watchdog disabled" ;;
+      0) break ;;
+      *) warn "invalid choice" ;;
+    esac
+  done
+}
+
 uninstall() {
-  read -r -p "  Remove Bomalo Tunnel completely? [y/N]: " a
+  read -r -p "  ${W}Remove Bomalo Tunnel completely?${N} [y/N]: " a
   [[ "$a" =~ ^[Yy]$ ]] || return
   systemctl disable --now bomalo >/dev/null 2>&1
-  rm -f "$UNIT" "$BIN" "$CRON" /usr/local/bin/bomalo-menu /usr/local/bin/bm
+  rm -f "$UNIT" "$BIN" "$CRON" "$MENU" /usr/local/bin/bm
   rm -rf "$CFG_DIR" "$SRC_DIR"
   systemctl daemon-reload
   ok "removed"
 }
 
+manage() {
+  while true; do
+    banner
+    echo "  ${W}${BD}Manage${N}"
+    echo "  ${D}------------------------------${N}"
+    echo "   ${R}1${N}) ${W}Edit settings${N}   ${D}(transport, token, SNI, port)${N}"
+    echo "   ${R}2${N}) ${W}Status${N}"
+    echo "   ${R}3${N}) ${W}Live logs${N}"
+    echo "   ${R}4${N}) ${W}Restart service${N}"
+    echo "   ${R}5${N}) ${W}Watchdog / cron${N}"
+    echo "   ${R}6${N}) ${W}Uninstall${N}"
+    echo "   ${R}0${N}) ${W}Back${N}"
+    echo
+    local c; read -r -p "  ${W}choice:${N} " c
+    case "$c" in
+      1) edit_settings; pause ;;
+      2) show_status; pause ;;
+      3) journalctl -u bomalo -f -n 50 ;;
+      4) restart_service; pause ;;
+      5) watchdog ;;
+      6) uninstall; pause ;;
+      0) break ;;
+      *) warn "invalid choice"; sleep 1 ;;
+    esac
+  done
+}
+
+# ------------------------------------------------------------------ main menu
+
 menu() {
   while true; do
     banner
-    local st ver
-    ver=$(bin_version || echo "not installed")
+    local ver st mode
+    ver=$(bin_version 2>/dev/null) || ver="not installed"
     if systemctl is-active --quiet bomalo 2>/dev/null; then st="${G}running${N}"
-    elif [ -f "$CFG" ]; then st="${R}stopped${N}"
-    else st="${D}not configured${N}"; fi
-    echo "  ${W}$ver${N}   ${D}service:${N} $st$( [ -f "$CFG" ] && echo "   ${D}mode:${N} $(jq -r .mode "$CFG")" )"
-    echo "  ${D}--------------------------------------------------${N}"
-    echo "   ${G}1${N})  Install / update the binary"
-    echo "   ${B}2${N})  Set up this server as ${W}IRAN${N} side      ${D}(server)${N}"
-    echo "   ${B}3${N})  Set up this server as ${W}FOREIGN${N} side   ${D}(client)${N}"
-    echo "   ${M}4${N})  Add forwarded ports              ${D}(Iran side)${N}"
-    echo "   ${M}5${N})  Remove a forwarded port          ${D}(Iran side)${N}"
-    echo "   ${Y}6${N})  Edit settings                    ${D}(transport, token, SNI ...)${N}"
-    echo "   ${B}7${N})  Status and settings"
-    echo "   ${B}8${N})  Live logs"
-    echo "   ${B}9${N})  Restart service"
-    echo "   ${GLD}w${N})  Watchdog / cron"
-    echo "   ${RED}u${N})  Uninstall"
-    echo "   ${D}0${N})  Exit"
+    elif [ -f "$CFG" ]; then st="${W}stopped${N}"
+    else st="${W}not configured${N}"; fi
+    mode=""
+    [ -f "$CFG" ] && mode="   ${D}mode:${N} ${W}$(jq -r .mode "$CFG")${N}"
+    echo "  ${W}$ver${N}   ${D}service:${N} $st$mode"
+    echo "  ${D}------------------------------${N}"
+    echo "   ${R}1${N}) ${W}Install / update the binary${N}"
+    echo "   ${R}2${N}) ${W}Set up as IRAN side${N}      ${D}(server)${N}"
+    echo "   ${R}3${N}) ${W}Set up as FOREIGN side${N}   ${D}(client)${N}"
+    echo "   ${R}4${N}) ${W}Add forwarded ports${N}      ${D}(Iran)${N}"
+    echo "   ${R}5${N}) ${W}Remove a forwarded port${N}  ${D}(Iran)${N}"
+    echo "   ${R}6${N}) ${W}Manage${N}"
+    echo "   ${R}0${N}) ${W}Exit${N}"
     echo
     local c; read -r -p "  ${W}choice:${N} " c
     case "$c" in
@@ -486,12 +554,7 @@ menu() {
       3) [ -x "$BIN" ] || install_binary; setup_client; pause ;;
       4) add_forward; restart_service; pause ;;
       5) del_forward; restart_service; pause ;;
-      6) edit_settings; pause ;;
-      7) show_status; pause ;;
-      8) journalctl -u bomalo -f -n 50 ;;
-      9) restart_service; pause ;;
-      w|W) watchdog ;;
-      u|U) uninstall; pause ;;
+      6) manage ;;
       0) clear 2>/dev/null; exit 0 ;;
       *) warn "invalid choice"; sleep 1 ;;
     esac
@@ -500,4 +563,5 @@ menu() {
 
 require_root
 ensure_deps
+install_shortcut >/dev/null 2>&1
 menu
