@@ -14,6 +14,12 @@
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
 </p>
 
+<p align="center">
+  <a href="#english">🇬🇧 English</a> &nbsp;/&nbsp; <a href="#فارسی"><img src="assets/flag-ir.png" width="16" height="16"> فارسی</a>
+</p>
+
+<a name="english"></a>
+## English
 
 A reverse tunnel that publishes a foreign VPN server through an Iran server.
 The foreign machine dials **out**, so it never needs an open inbound port and its
@@ -138,9 +144,12 @@ Standard library only — no third-party modules.
 
 ---
 
+<a name="فارسی"></a>
 <div dir="rtl">
 
 # بومالو تانل
+
+[⬆ English](#english)
 
 یک تانل معکوس که سرور VPN خارج را از طریق سرور ایران منتشر می‌کند.
 سرور خارج خودش **به بیرون وصل می‌شود**، بنابراین نیازی به پورت باز ورودی ندارد و
