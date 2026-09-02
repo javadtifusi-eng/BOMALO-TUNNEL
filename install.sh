@@ -19,7 +19,7 @@ SRC_DIR=/opt/bomalo-src
 GO_MIN=1.21
 
 # palette: text is white, numbers are red, only "running" is green
-W=$'\e[97m'; R=$'\e[91m'; G=$'\e[92m'; BL=$'\e[94m'; D=$'\e[90m'; N=$'\e[0m'; BD=$'\e[1m'
+W=$'\e[97m'; R=$'\e[91m'; G=$'\e[92m'; BL=$'\e[94m'; C=$'\e[96m'; D=$'\e[90m'; N=$'\e[0m'; BD=$'\e[1m'
 
 info() { echo "${W}==>${N} ${W}$*${N}"; }
 ok()   { echo "${G} ok ${N} ${W}$*${N}"; }
@@ -28,38 +28,48 @@ die()  { echo "${R}fail${N} ${W}$*${N}"; exit 1; }
 
 cols() { local c; c=$(tput cols 2>/dev/null || echo 80); [ -n "$c" ] && echo "$c" || echo 80; }
 
+# rule N repeats a single character N times without depending on seq.
+rule() { local n="$1" ch="$2" out; printf -v out '%*s' "$n" ''; echo "${out// /$ch}"; }
+
+# boxline prints one row of the header box: "  ║<centered text, colored>║"
+# text must be plain (no ANSI codes) so its length can be measured for
+# centering; color is applied only when printing.
+boxline() {
+  local bw="$1" text="$2" color="${3:-$W}"
+  local tlen=${#text} left right
+  left=$(( (bw - tlen) / 2 )); [ "$left" -lt 0 ] && left=0
+  right=$(( bw - tlen - left )); [ "$right" -lt 0 ] && right=0
+  printf '  %s║%s' "${BL}${BD}" "$N"
+  printf '%*s' "$left" ''
+  printf '%s%s%s' "${color}${BD}" "$text" "$N"
+  printf '%*s' "$right" ''
+  printf '%s║%s\n' "${BL}${BD}" "$N"
+}
+
 banner() {
   clear 2>/dev/null || true
-  local rule="======================================================================"
-  printf '%s' "${D}"
-  echo "$rule"
-  printf '%s' "$N"
-  printf '%s' "${G}${BD}"
-  cat <<'EOF'
-      ########     ######   ##      ##   ######   ##           ######
-     ##      ## ##      ## ####  #### ##      ## ##         ##      ##
-    ##      ## ##      ## ##  ##  ## ##      ## ##         ##      ##
-   ########   ##      ## ##  ##  ## ########## ##         ##      ##
-  ##      ## ##      ## ##      ## ##      ## ##         ##      ##
- ##      ## ##      ## ##      ## ##      ## ##         ##      ##
-########     ######   ##      ## ##      ## ##########   ######
-EOF
-  printf '%s' "${N}${D}"
-  echo "----------------------------------------------------------------"
-  printf '%s' "${N}${R}${BD}"
-  cat <<'EOF'
-      ##### #   # #   # #   # ##### #
-       #   #   # ##  # ##  # #     #
-      #   #   # # # # # # # #     #
-     #   #   # # # # # # # ####  #
-    #   #   # #  ## #  ## #     #
-   #   #   # #   # #   # #     #
-  #    ###  #   # #   # ##### #####
-EOF
-  printf '%s' "${N}${D}"
-  echo "$rule"
-  printf '%s' "$N"
-  echo "  ${W}reverse tunnel${N}  ${D}·  client-initiated${N}"
+  local w bw hb
+  w=$(cols)
+  bw=48
+  [ "$w" -lt $((bw + 4)) ] && bw=$((w - 4))
+  [ "$bw" -lt 24 ] && bw=24
+  hb=$(rule "$bw" "═")
+
+  echo
+  printf '  %s╔%s╗%s\n' "${BL}${BD}" "$hb" "$N"
+  boxline "$bw" ""
+  printf '  %s║%s' "${BL}${BD}" "$N"
+  local title="Bomalo" title2=" Tunnel" tlen=$((${#title} + ${#title2}))
+  local left=$(( (bw - tlen) / 2 )); [ "$left" -lt 0 ] && left=0
+  local right=$(( bw - tlen - left )); [ "$right" -lt 0 ] && right=0
+  printf '%*s' "$left" ''
+  printf '%s%s%s' "${C}${BD}" "$title" "$N"
+  printf '%s%s%s' "${R}${BD}" "$title2" "$N"
+  printf '%*s' "$right" ''
+  printf '%s║%s\n' "${BL}${BD}" "$N"
+  boxline "$bw" "reverse tunnel · client-initiated" "$D"
+  boxline "$bw" ""
+  printf '  %s╚%s╝%s\n' "${BL}${BD}" "$hb" "$N"
   echo
 }
 
@@ -672,8 +682,8 @@ uninstall() {
 manage() {
   while true; do
     banner
-    echo "  ${W}${BD}Manage${N}"
-    echo "  ${D}------------------------------${N}"
+    echo "  ${C}${BD}▸ Manage${N}"
+    echo "  ${D}$(rule 34 "─")${N}"
     echo "   ${R}1${N}) ${W}Edit settings${N}   ${D}(transport, token, SNI, port)${N}"
     echo "   ${R}2${N}) ${W}Status${N}"
     echo "   ${R}3${N}) ${W}Live logs${N}"
@@ -711,7 +721,7 @@ menu() {
     mode=""
     [ -f "$CFG" ] && mode="   ${D}mode:${N} ${W}$(jq -r .mode "$CFG")${N}"
     echo "  ${W}$ver${N}   ${D}service:${N} $st$mode"
-    echo "  ${D}------------------------------${N}"
+    echo "  ${D}$(rule 34 "─")${N}"
     echo "   ${R}${BD}1${N}) ${W}${BD}Install / update the binary${N}"
     echo "   ${R}${BD}2${N}) ${W}${BD}Set up as IRAN side${N}      ${D}(server)${N}"
     echo "   ${R}${BD}3${N}) ${W}${BD}Set up as FOREIGN side${N}   ${D}(client)${N}"
