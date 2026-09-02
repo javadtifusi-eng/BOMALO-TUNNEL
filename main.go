@@ -65,11 +65,12 @@ type Config struct {
 	Mode      string    `json:"mode"`      // server | client
 	Listen    string    `json:"listen"`    // server only: tunnel listen address
 	Server    string    `json:"server"`    // client only: iran_ip:tunnel_port
-	Transport string    `json:"transport"` // tcp | tls | ws | wss
+	Transport string    `json:"transport"` // tcp | tls | ws | wss | tcpmux | wsmux | wssmux
 	Token     string    `json:"token"`
-	SNI       string    `json:"sni"`  // TLS server name / certificate CN
-	Path      string    `json:"path"` // HTTP path used by ws/wss
-	Pool      int       `json:"pool"` // client only: idle tunnel connections kept warm
+	SNI       string    `json:"sni"`     // TLS server name / certificate CN
+	Path      string    `json:"path"`    // HTTP path used by ws/wss/wsmux/wssmux
+	Pool      int       `json:"pool"`    // client only: idle tunnel connections kept warm (non-mux transports)
+	MuxCon    int       `json:"mux_con"` // client only: physical connections kept open (mux transports)
 	Forwards  []Forward `json:"forwards"`
 	Verbose   bool      `json:"verbose"`
 }
@@ -86,6 +87,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Pool <= 0 {
 		c.Pool = 8
+	}
+	if c.MuxCon <= 0 {
+		c.MuxCon = 8
 	}
 	for i := range c.Forwards {
 		if c.Forwards[i].Net == "" {
@@ -111,9 +115,9 @@ func (c *Config) validate() error {
 		return fmt.Errorf("mode must be \"server\" or \"client\", got %q", c.Mode)
 	}
 	switch c.Transport {
-	case "tcp", "tls", "ws", "wss":
+	case "tcp", "tls", "ws", "wss", "tcpmux", "wsmux", "wssmux":
 	default:
-		return fmt.Errorf("transport must be tcp, tls, ws or wss, got %q", c.Transport)
+		return fmt.Errorf("transport must be tcp, tls, ws, wss, tcpmux, wsmux or wssmux, got %q", c.Transport)
 	}
 	if len(c.Token) < 8 {
 		return errors.New("token must be at least 8 characters")
@@ -521,6 +525,10 @@ type Server struct {
 	pool     chan *dataConn
 	controls int64
 	mu       sync.Mutex
+
+	muxMu       sync.Mutex
+	muxSessions []*muxSession
+	muxRR       int
 }
 
 func (s *Server) log(format string, v ...interface{}) { log.Printf(format, v...) }
@@ -548,7 +556,7 @@ func (s *Server) Run() error {
 		return fmt.Errorf("cannot listen on %s: %w", s.cfg.Listen, err)
 	}
 	ln := net.Listener(nodelayListener{rawLn})
-	if s.cfg.Transport == "tls" || s.cfg.Transport == "wss" {
+	if s.cfg.Transport == "tls" || s.cfg.Transport == "wss" || s.cfg.Transport == "wssmux" {
 		tc, err := tlsServerConfig(s.cfg.SNI)
 		if err != nil {
 			return err
@@ -557,12 +565,17 @@ func (s *Server) Run() error {
 	}
 	s.log("tunnel listening on %s (%s)", s.cfg.Listen, s.cfg.Transport)
 
+	mux := isMuxTransport(s.cfg.Transport)
 	for _, fw := range s.cfg.Forwards {
 		fw := fw
-		switch fw.Net {
-		case "tcp":
+		switch {
+		case fw.Net == "tcp" && mux:
+			go s.serveTCPForwardMux(fw)
+		case fw.Net == "tcp":
 			go s.serveTCPForward(fw)
-		case "udp":
+		case fw.Net == "udp" && mux:
+			go s.serveUDPForwardMux(fw)
+		case fw.Net == "udp":
 			go s.serveUDPForward(fw)
 		default:
 			s.log("skipping forward %s: unknown net %q", fw.Listen, fw.Net)
@@ -587,7 +600,7 @@ func (s *Server) acceptTunnel(raw net.Conn) {
 	br := bufio.NewReaderSize(raw, 32*1024)
 	var conn net.Conn = raw
 
-	if s.cfg.Transport == "ws" || s.cfg.Transport == "wss" {
+	if s.cfg.Transport == "ws" || s.cfg.Transport == "wss" || s.cfg.Transport == "wsmux" || s.cfg.Transport == "wssmux" {
 		if err := serverUpgrade(raw, br, s.cfg.Path); err != nil {
 			if s.cfg.Verbose {
 				s.log("handshake from %s failed: %v", raw.RemoteAddr(), err)
@@ -630,6 +643,8 @@ func (s *Server) acceptTunnel(raw net.Conn) {
 		s.handleControl(f)
 	case "data":
 		s.parkData(f)
+	case "mux":
+		s.handleMux(f)
 	default:
 		raw.Close()
 	}
@@ -905,6 +920,14 @@ type Client struct {
 func (c *Client) log(format string, v ...interface{}) { log.Printf(format, v...) }
 
 func (c *Client) Run() error {
+	if isMuxTransport(c.cfg.Transport) {
+		c.log("connecting to %s (%s), mux_con=%d", c.cfg.Server, c.cfg.Transport, c.cfg.MuxCon)
+		for i := 0; i < c.cfg.MuxCon; i++ {
+			go c.muxWorker()
+			time.Sleep(50 * time.Millisecond)
+		}
+		select {} // run until the service is stopped
+	}
 	c.log("connecting to %s (%s), pool=%d", c.cfg.Server, c.cfg.Transport, c.cfg.Pool)
 	go c.controlLoop()
 	for i := 0; i < c.cfg.Pool; i++ {
@@ -926,7 +949,7 @@ func (c *Client) connect(role string) (*fconn, error) {
 	}
 	raw.SetDeadline(time.Now().Add(20 * time.Second))
 
-	if c.cfg.Transport == "tls" || c.cfg.Transport == "wss" {
+	if c.cfg.Transport == "tls" || c.cfg.Transport == "wss" || c.cfg.Transport == "wssmux" {
 		tconn := tls.Client(raw, &tls.Config{
 			ServerName: c.cfg.SNI,
 			// the tunnel is authenticated by the shared token; the certificate
@@ -944,7 +967,7 @@ func (c *Client) connect(role string) (*fconn, error) {
 	br := bufio.NewReaderSize(raw, 32*1024)
 	var conn net.Conn = raw
 
-	if c.cfg.Transport == "ws" || c.cfg.Transport == "wss" {
+	if c.cfg.Transport == "ws" || c.cfg.Transport == "wss" || c.cfg.Transport == "wsmux" || c.cfg.Transport == "wssmux" {
 		if err := clientUpgrade(raw, br, c.cfg.SNI, c.cfg.Path); err != nil {
 			raw.Close()
 			return nil, err

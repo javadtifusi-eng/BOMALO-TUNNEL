@@ -77,6 +77,9 @@ property of any userspace relay, not a bug.
 | `tls` | TLS 1.2+ with a self-signed certificate and a fake SNI |
 | `ws` | HTTP `Upgrade: websocket` handshake, then real RFC 6455 frames |
 | `wss` | the same, inside TLS — best against DPI, and safe to sit behind a WebSocket-aware reverse proxy or CDN |
+| `tcpmux` | like `tcp`, but multiplexed — see below |
+| `wsmux` | like `ws`, but multiplexed |
+| `wssmux` | like `wss`, but multiplexed |
 
 Note on `ws`/`wss`: both the handshake and the traffic after it are real
 WebSocket — every tunnel message is sent as one binary frame (masked when
@@ -84,6 +87,21 @@ sent by the client, per RFC 6455), fragmented frames from an intermediary
 are reassembled transparently, and pings are answered automatically. This
 is what makes it possible to place the Iran-side server behind an nginx
 WebSocket proxy or a CDN instead of only a plain TCP passthrough.
+
+### Plain vs. mux transports
+
+`tcp`/`tls`/`ws`/`wss` open one physical connection per forwarded TCP
+session or UDP flow, drawn from a pool of `pool` connections the foreign
+server keeps warm. Simple, and works well.
+
+`tcpmux`/`wsmux`/`wssmux` instead keep a small, fixed number of physical
+connections open (`mux_con`, default 8 — Backhaul users will recognize the
+model) and multiplex every session as a logical stream over whichever one
+is picked, the way [Backhaul](https://github.com/Musixal/Backhaul) does.
+This means far fewer open sockets and handshakes on the foreign server
+under many simultaneous sessions, at the cost of some head-of-line
+blocking on each physical connection when it is very busy — raise
+`mux_con` to spread load across more of them.
 
 ## Configuration
 
@@ -121,8 +139,11 @@ On the foreign server:
 }
 ```
 
-`pool` is how many connections are kept warm. Raising it removes the dial
-round-trip for bursty workloads; 8–32 is a sensible range.
+`pool` is how many connections are kept warm (plain transports). Raising it
+removes the dial round-trip for bursty workloads; 8–32 is a sensible range.
+For a mux transport (`tcpmux`/`wsmux`/`wssmux`), `mux_con` plays the
+equivalent role: it is how many physical connections carry all the
+multiplexed sessions.
 
 ## Commands
 
@@ -189,6 +210,14 @@ OpenVPN (TCP/UDP)، L2TP/IPsec، IKEv2، WireGuard، VLESS/VMess/Trojan، پنل
 
 `tcp` سریع‌ترین و بدون استتار، `tls` با گواهی self-signed و SNI جعلی،
 `ws` دست‌دادن HTTP/WebSocket و `wss` همان دست‌دادن داخل TLS (بهترین حالت مقابل DPI).
+
+علاوه بر این‌ها سه ترنسپورت **multiplex** هم هست: `tcpmux`، `wsmux` و `wssmux`
+(دقیقاً همون مدلی که [Backhaul](https://github.com/Musixal/Backhaul) استفاده می‌کنه).
+حالت‌های معمولی به ازای هر سشن (هر اتصال TCP یا هر جریان UDP) یک کانکشن فیزیکی
+جدا از استخر `pool` برمی‌دارند؛ حالت‌های mux برعکس، فقط تعداد ثابتی کانکشن فیزیکی
+(`mux_con`، پیش‌فرض ۸) باز نگه می‌دارند و همهٔ سشن‌ها را روی همون چند کانکشن
+multiplex می‌کنند — یعنی زیر بار زیاد، سوکت و هندشیک بسیار کمتری روی سرور خارج
+باز می‌مونه. اگر زیر بار سنگین کندی دیدید، `mux_con` را بالا ببرید.
 
 دربارهٔ `ws`/`wss`: هم دست‌دادن، هم دادهٔ بعد از آن، هر دو WebSocket واقعی
 هستند — هر پیام تانل به‌صورت یک فریم باینری RFC 6455 فرستاده می‌شود (با
