@@ -571,8 +571,12 @@ setup_wg_bridge() {
   if [ "$role" = 1 ]; then
     read -r -p "  ${W}Route L2TP/IPsec (UDP 500,4500) through this bridge?${N} [Y/n]: " rl
     if [[ "${rl:-y}" =~ ^[Yy]?$ ]]; then
-      postup="PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -t nat -A PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -A POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j MASQUERADE; iptables -A FORWARD -o %i -j ACCEPT; iptables -A FORWARD -i %i -j ACCEPT"
-      postdown="PostDown = iptables -t nat -D PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -D POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j MASQUERADE; iptables -D FORWARD -o %i -j ACCEPT; iptables -D FORWARD -i %i -j ACCEPT"
+      # a FIXED-address SNAT, not MASQUERADE: this interface's address never
+      # changes, and a fixed source keeps the peer identity IPsec expects
+      # stable across the life of a session (see l2tp-bridge.sh for the
+      # same rationale in the standalone version of this bridge).
+      postup="PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -t nat -A PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -A POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j SNAT --to-source 10.200.0.1; iptables -A FORWARD -o %i -j ACCEPT; iptables -A FORWARD -i %i -j ACCEPT"
+      postdown="PostDown = iptables -t nat -D PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -D POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j SNAT --to-source 10.200.0.1; iptables -D FORWARD -o %i -j ACCEPT; iptables -D FORWARD -i %i -j ACCEPT"
       # this now conflicts with Bomalo's own relay for the same ports - drop those forwards
       if [ -f "$CFG" ] && [ "$(jq -r .mode "$CFG" 2>/dev/null)" = "server" ]; then
         local tmp; tmp=$(jq '.forwards |= map(select(.listen != "0.0.0.0:500" and .listen != "0.0.0.0:4500"))' "$CFG")
@@ -581,6 +585,19 @@ setup_wg_bridge() {
       fi
       open_port "$port" udp
     fi
+  else
+    # rp_filter must be off from the very first packet, not just after
+    # wg-quick's own PostUp runs (which only applies once the interface is
+    # already up) - otherwise the kernel can silently drop the relayed
+    # L2TP/IPsec packets arriving over wg0 before they ever reach xl2tpd/
+    # strongSwan, even though a plain ping across the bridge works fine.
+    postup="PostUp = sysctl -w net.ipv4.conf.all.rp_filter=0>/dev/null; sysctl -w net.ipv4.conf.%i.rp_filter=0>/dev/null"
+    {
+      grep -q '^net.ipv4.conf.all.rp_filter' /etc/sysctl.conf 2>/dev/null && \
+        sed -i 's/^net.ipv4.conf.all.rp_filter.*/net.ipv4.conf.all.rp_filter=0/' /etc/sysctl.conf || \
+        echo 'net.ipv4.conf.all.rp_filter=0' >> /etc/sysctl.conf
+    }
+    sysctl -p >/dev/null 2>&1
   fi
 
   cat > "$WG_CFG" <<EOF
