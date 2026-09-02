@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Bomalo Tunnel installer / manager
-#   bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/BOMALO-TUNNEL/main/install.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/Tifusi-Tunnel/main/install.sh)
 set -uo pipefail
 
 REPO_USER="javadtifusi-eng"
-REPO_NAME="BOMALO-TUNNEL"
+REPO_NAME="Tifusi-Tunnel"
 BRANCH="main"
 RAW="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/${BRANCH}"
 RELEASE="https://github.com/${REPO_USER}/${REPO_NAME}/releases/latest/download"
@@ -30,6 +30,10 @@ cols() { local c; c=$(tput cols 2>/dev/null || echo 80); [ -n "$c" ] && echo "$c
 
 banner() {
   clear 2>/dev/null || true
+  local rule="======================================================================"
+  printf '%s' "${D}"
+  echo "$rule"
+  printf '%s' "$N"
   printf '%s' "${G}${BD}"
   cat <<'EOF'
       ########     ######   ##      ##   ######   ##           ######
@@ -40,6 +44,8 @@ banner() {
  ##      ## ##      ## ##      ## ##      ## ##         ##      ##
 ########     ######   ##      ## ##      ## ##########   ######
 EOF
+  printf '%s' "${N}${D}"
+  echo "----------------------------------------------------------------"
   printf '%s' "${N}${R}${BD}"
   cat <<'EOF'
       ##### #   # #   # #   # ##### #
@@ -50,8 +56,10 @@ EOF
    #   #   # #   # #   # #     #
   #    ###  #   # #   # ##### #####
 EOF
+  printf '%s' "${N}${D}"
+  echo "$rule"
   printf '%s' "$N"
-  echo "  ${D}reverse tunnel · client-initiated${N}"
+  echo "  ${W}reverse tunnel${N}  ${D}·  client-initiated${N}"
   echo
 }
 
