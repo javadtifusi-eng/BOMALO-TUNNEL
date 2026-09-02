@@ -31,11 +31,13 @@ cols() { local c; c=$(tput cols 2>/dev/null || echo 80); [ -n "$c" ] && echo "$c
 banner() {
   clear 2>/dev/null || true
   if [ "$(cols)" -lt 72 ]; then
-    printf '%s' "$R"
-    echo '  +--------------------------+'
-    echo '  |    B O M A L O           |'
-    echo '  |          T U N N E L     |'
-    echo '  +--------------------------+'
+    printf '%s' "$D"
+    echo '  +-------------------------------+'
+    printf '%s' "$N"
+    echo "  ${D}|${N}    ${G}${BD}B O M A L O${N}                ${D}|${N}"
+    echo "  ${D}|${N}            ${W}T  U  N  N  E  L${N}   ${D}|${N}"
+    printf '%s' "$D"
+    echo '  +-------------------------------+'
     printf '%s' "$N"
   else
     printf '%s' "$R"
