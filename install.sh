@@ -32,26 +32,26 @@ banner() {
   clear 2>/dev/null || true
   printf '%s' "${G}${BD}"
   cat <<'EOF'
-████████     ██████   ██      ██   ██████   ██           ██████
-██      ██ ██      ██ ████  ████ ██      ██ ██         ██      ██
-██      ██ ██      ██ ██  ██  ██ ██      ██ ██         ██      ██
-████████   ██      ██ ██  ██  ██ ██████████ ██         ██      ██
-██      ██ ██      ██ ██      ██ ██      ██ ██         ██      ██
-██      ██ ██      ██ ██      ██ ██      ██ ██         ██      ██
-████████     ██████   ██      ██ ██      ██ ██████████   ██████
+      ########     ######   ##      ##   ######   ##           ######
+     ##      ## ##      ## ####  #### ##      ## ##         ##      ##
+    ##      ## ##      ## ##  ##  ## ##      ## ##         ##      ##
+   ########   ##      ## ##  ##  ## ########## ##         ##      ##
+  ##      ## ##      ## ##      ## ##      ## ##         ##      ##
+ ##      ## ##      ## ##      ## ##      ## ##         ##      ##
+########     ######   ##      ## ##      ## ##########   ######
 EOF
-  printf '%s' "${N}${W}"
+  printf '%s' "${N}${R}"
   cat <<'EOF'
-               █████ █   █ █   █ █   █ █████ █
-                 █   █   █ ██  █ ██  █ █     █
-                 █   █   █ █ █ █ █ █ █ █     █
-                 █   █   █ █ █ █ █ █ █ ████  █
-                 █   █   █ █  ██ █  ██ █     █
-                 █   █   █ █   █ █   █ █     █
-                 █    ███  █   █ █   █ █████ █████
+      ##### #   # #   # #   # ##### #
+       #   #   # ##  # ##  # #     #
+      #   #   # # # # # # # #     #
+     #   #   # # # # # # # ####  #
+    #   #   # #  ## #  ## #     #
+   #   #   # #   # #   # #     #
+  #    ###  #   # #   # ##### #####
 EOF
   printf '%s' "$N"
-  echo "  ${BL}reverse tunnel${N}  ${D}client-initiated${N}"
+  echo "  ${D}reverse tunnel · client-initiated${N}"
   echo
 }
 
@@ -347,7 +347,7 @@ add_forward() {
     echo "  ${W}Which service should this Iran server publish?${N}"
     echo "    ${R}1${N}) ${W}OpenVPN${N}         UDP 1194"
     echo "    ${R}2${N}) ${W}OpenVPN${N}         TCP 1194"
-    echo "    ${R}3${N}) ${W}L2TP/IPsec${N}      UDP 500, 4500, 1701"
+    echo "    ${R}3${N}) ${W}L2TP/IPsec${N}      UDP 500, 4500"
     echo "    ${R}4${N}) ${W}IKEv2${N}           UDP 500, 4500"
     echo "    ${R}5${N}) ${W}WireGuard${N}       UDP 51820"
     echo "    ${R}6${N}) ${W}VLESS / Xray${N}    TCP 443"
@@ -485,6 +485,115 @@ write_cron() {
   ok "watchdog enabled"
 }
 
+WG_IF="wg0"
+WG_DIR="/etc/wireguard"
+WG_CFG="$WG_DIR/${WG_IF}.conf"
+WG_PORT_DEFAULT=51900
+
+ensure_wg() {
+  command -v wg >/dev/null 2>&1 && return
+  info "installing WireGuard"
+  pkg_install wireguard-tools wireguard >/dev/null 2>&1 || pkg_install wireguard >/dev/null 2>&1
+  command -v wg >/dev/null 2>&1 || die "could not install WireGuard - install it manually (wireguard-tools) and try again"
+}
+
+wg_own_key() {
+  mkdir -p "$WG_DIR"; chmod 700 "$WG_DIR"
+  if [ ! -f "$WG_DIR/privatekey" ]; then
+    umask 077
+    wg genkey | tee "$WG_DIR/privatekey" | wg pubkey > "$WG_DIR/publickey"
+  fi
+  cat "$WG_DIR/publickey"
+}
+
+wg_status() {
+  echo
+  if ip link show "$WG_IF" >/dev/null 2>&1; then
+    ok "wg0 is up"
+    wg show "$WG_IF" 2>/dev/null | sed 's/^/   /'
+  else
+    warn "wg0 is not up"
+  fi
+  echo
+}
+
+# setup_wg_bridge configures a private, server-to-server WireGuard link
+# between Iran and the foreign server. This exists for protocols (L2TP/
+# IPsec) whose peer identity depends on a stable, real IP - something the
+# app-level relay above cannot give them, since it opens an independent
+# connection per forwarded port. Over this bridge, Iran can instead use
+# real kernel NAT (exactly like a home router forwarding a port), which
+# keeps that identity consistent the way IPsec expects.
+setup_wg_bridge() {
+  ensure_wg
+  local pub; pub=$(wg_own_key)
+  echo
+  echo "  ${W}${BD}WireGuard bridge${N}  ${D}a private server-to-server link, for protocols like L2TP/IPsec${N}"
+  echo "   ${R}1${N}) ${W}This is the IRAN side${N}"
+  echo "   ${R}2${N}) ${W}This is the FOREIGN side${N}"
+  echo "   ${R}0${N}) ${W}back${N}"
+  local role; read -r -p "  ${W}choice:${N} " role
+  [ "$role" = 0 ] || [ -z "$role" ] && return
+
+  local my_ip peer_pub peer_ip peer_endpoint port
+  port=$(ask "WireGuard port (must match on both servers)" "$WG_PORT_DEFAULT")
+  echo
+  echo "  ${W}Your public key:${N} $pub"
+  echo "  ${D}Copy this, and the port above, to the other server.${N}"
+  echo
+  peer_pub=$(ask "Peer's public key" "")
+  [ -z "$peer_pub" ] && { warn "public key is required"; return; }
+  peer_endpoint=$(ask "Peer's public IP" "")
+  [ -z "$peer_endpoint" ] && { warn "peer IP is required"; return; }
+
+  if [ "$role" = 1 ]; then my_ip="10.200.0.1/30"; peer_ip="10.200.0.2/32"
+  else my_ip="10.200.0.2/30"; peer_ip="10.200.0.1/32"; fi
+
+  local postup="" postdown=""
+  if [ "$role" = 1 ]; then
+    read -r -p "  ${W}Route L2TP/IPsec (UDP 500,4500) through this bridge?${N} [Y/n]: " rl
+    if [[ "${rl:-y}" =~ ^[Yy]?$ ]]; then
+      postup="PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -t nat -A PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -A POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j MASQUERADE; iptables -A FORWARD -o %i -j ACCEPT; iptables -A FORWARD -i %i -j ACCEPT"
+      postdown="PostDown = iptables -t nat -D PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -D POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j MASQUERADE; iptables -D FORWARD -o %i -j ACCEPT; iptables -D FORWARD -i %i -j ACCEPT"
+      # this now conflicts with Bomalo's own relay for the same ports - drop those forwards
+      if [ -f "$CFG" ] && [ "$(jq -r .mode "$CFG" 2>/dev/null)" = "server" ]; then
+        local tmp; tmp=$(jq '.forwards |= map(select(.listen != "0.0.0.0:500" and .listen != "0.0.0.0:4500"))' "$CFG")
+        echo "$tmp" | jq . > "$CFG"
+        ok "removed the old relay-based L2TP forwards (500/4500 now go through WireGuard instead)"
+      fi
+      open_port "$port" udp
+    fi
+  fi
+
+  cat > "$WG_CFG" <<EOF
+[Interface]
+PrivateKey = $(cat "$WG_DIR/privatekey")
+Address = $my_ip
+ListenPort = $port
+$postup
+$postdown
+
+[Peer]
+PublicKey = $peer_pub
+AllowedIPs = $peer_ip
+Endpoint = $peer_endpoint:$port
+PersistentKeepalive = 25
+EOF
+  chmod 600 "$WG_CFG"
+  open_port "$port" udp
+
+  systemctl enable --now "wg-quick@${WG_IF}" >/dev/null 2>&1
+  systemctl restart "wg-quick@${WG_IF}"
+  sleep 1
+  if ip link show "$WG_IF" >/dev/null 2>&1; then
+    ok "bridge is up"
+    echo "   ${D}test it once the other side is configured: ping $( [ "$role" = 1 ] && echo 10.200.0.2 || echo 10.200.0.1 )${N}"
+    [ "$role" = 1 ] && restart_service
+  else
+    warn "wg0 did not come up - check: journalctl -u wg-quick@${WG_IF} -n 30"
+  fi
+}
+
 watchdog() {
   command -v crontab >/dev/null 2>&1 || pkg_install cron >/dev/null 2>&1
   while true; do
@@ -545,7 +654,8 @@ uninstall() {
   read -r -p "  ${W}Remove Bomalo Tunnel completely?${N} [y/N]: " a
   [[ "$a" =~ ^[Yy]$ ]] || return
   systemctl disable --now bomalo >/dev/null 2>&1
-  rm -f "$UNIT" "$BIN" "$CRON" "$MENU" /usr/local/bin/bm
+  systemctl disable --now "wg-quick@${WG_IF}" >/dev/null 2>&1
+  rm -f "$UNIT" "$BIN" "$CRON" "$MENU" /usr/local/bin/bm "$WG_CFG"
   rm -rf "$CFG_DIR" "$SRC_DIR"
   systemctl daemon-reload
   ok "removed"
@@ -561,7 +671,8 @@ manage() {
     echo "   ${R}3${N}) ${W}Live logs${N}"
     echo "   ${R}4${N}) ${W}Restart service${N}"
     echo "   ${R}5${N}) ${W}Watchdog / cron${N}"
-    echo "   ${R}6${N}) ${W}Uninstall${N}"
+    echo "   ${R}6${N}) ${W}WireGuard bridge${N}  ${D}(fixes L2TP/IPsec)${N}"
+    echo "   ${R}7${N}) ${W}Uninstall${N}"
     echo "   ${R}0${N}) ${W}Back${N}"
     echo
     local c; read -r -p "  ${W}choice:${N} " c
@@ -571,7 +682,8 @@ manage() {
       3) journalctl -u bomalo -f -n 50 ;;
       4) restart_service; pause ;;
       5) watchdog ;;
-      6) uninstall; pause ;;
+      6) setup_wg_bridge; wg_status; pause ;;
+      7) uninstall; pause ;;
       0) break ;;
       *) warn "invalid choice"; sleep 1 ;;
     esac
@@ -592,13 +704,13 @@ menu() {
     [ -f "$CFG" ] && mode="   ${D}mode:${N} ${W}$(jq -r .mode "$CFG")${N}"
     echo "  ${W}$ver${N}   ${D}service:${N} $st$mode"
     echo "  ${D}------------------------------${N}"
-    echo "   ${R}1${N}) ${W}Install / update the binary${N}"
-    echo "   ${R}2${N}) ${W}Set up as IRAN side${N}      ${D}(server)${N}"
-    echo "   ${R}3${N}) ${W}Set up as FOREIGN side${N}   ${D}(client)${N}"
-    echo "   ${R}4${N}) ${W}Add forwarded ports${N}      ${D}(Iran)${N}"
-    echo "   ${R}5${N}) ${W}Remove a forwarded port${N}  ${D}(Iran)${N}"
-    echo "   ${R}6${N}) ${W}Manage${N}"
-    echo "   ${R}0${N}) ${W}Exit${N}"
+    echo "   ${R}${BD}1${N}) ${W}${BD}Install / update the binary${N}"
+    echo "   ${R}${BD}2${N}) ${W}${BD}Set up as IRAN side${N}      ${D}(server)${N}"
+    echo "   ${R}${BD}3${N}) ${W}${BD}Set up as FOREIGN side${N}   ${D}(client)${N}"
+    echo "   ${R}${BD}4${N}) ${W}${BD}Add forwarded ports${N}      ${D}(Iran)${N}"
+    echo "   ${R}${BD}5${N}) ${W}${BD}Remove a forwarded port${N}  ${D}(Iran)${N}"
+    echo "   ${R}${BD}6${N}) ${W}${BD}Manage${N}"
+    echo "   ${R}${BD}0${N}) ${W}${BD}Exit${N}"
     echo
     local c; read -r -p "  ${W}choice:${N} " c
     case "$c" in
