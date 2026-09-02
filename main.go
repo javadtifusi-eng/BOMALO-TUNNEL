@@ -23,6 +23,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -292,6 +293,194 @@ func serverUpgrade(c net.Conn, br *bufio.Reader, path string) error {
 	return err
 }
 
+// ---------------------------------------------------------------- real WebSocket framing (RFC 6455)
+//
+// The handshake above matches a real WebSocket upgrade byte-for-byte, but
+// until here the data that followed it was a raw, unframed stream - not
+// something a real WebSocket-aware intermediary (nginx, a CDN) could relay.
+// wsConn fixes that: every fconn.send() becomes exactly one WebSocket
+// binary frame, and reads transparently reassemble frames (including
+// fragmented ones) back into a byte stream, replying to pings automatically.
+// Per RFC 6455, frames a client sends MUST be masked; frames a server sends
+// MUST NOT be - wsConn tracks which side it is and does the right thing.
+
+const (
+	wsOpContinuation = 0x0
+	wsOpText         = 0x1
+	wsOpBinary       = 0x2
+	wsOpClose        = 0x8
+	wsOpPing         = 0x9
+	wsOpPong         = 0xA
+	wsMaxFrame       = 8 * 1024 * 1024 // guard against a hostile/broken peer
+)
+
+func wsWriteFrame(w io.Writer, isClient bool, opcode byte, payload []byte) error {
+	n := len(payload)
+	head := []byte{0x80 | opcode} // FIN=1, no fragmentation on send
+
+	var maskBit byte
+	if isClient {
+		maskBit = 0x80
+	}
+	switch {
+	case n <= 125:
+		head = append(head, maskBit|byte(n))
+	case n <= 65535:
+		ext := make([]byte, 2)
+		binary.BigEndian.PutUint16(ext, uint16(n))
+		head = append(head, maskBit|126)
+		head = append(head, ext...)
+	default:
+		ext := make([]byte, 8)
+		binary.BigEndian.PutUint64(ext, uint64(n))
+		head = append(head, maskBit|127)
+		head = append(head, ext...)
+	}
+
+	buf := make([]byte, 0, len(head)+4+n)
+	buf = append(buf, head...)
+	if isClient {
+		var mask [4]byte
+		if _, err := rand.Read(mask[:]); err != nil {
+			return err
+		}
+		buf = append(buf, mask[:]...)
+		masked := make([]byte, n)
+		for i := 0; i < n; i++ {
+			masked[i] = payload[i] ^ mask[i%4]
+		}
+		buf = append(buf, masked...)
+	} else {
+		buf = append(buf, payload...)
+	}
+	_, err := w.Write(buf)
+	return err
+}
+
+// wsReadFrame reads exactly one WebSocket frame from br.
+func wsReadFrame(br *bufio.Reader) (fin bool, opcode byte, payload []byte, err error) {
+	var hdr [2]byte
+	if _, err = io.ReadFull(br, hdr[:]); err != nil {
+		return
+	}
+	fin = hdr[0]&0x80 != 0
+	opcode = hdr[0] & 0x0F
+	masked := hdr[1]&0x80 != 0
+	length := uint64(hdr[1] & 0x7F)
+
+	switch length {
+	case 126:
+		var ext [2]byte
+		if _, err = io.ReadFull(br, ext[:]); err != nil {
+			return
+		}
+		length = uint64(binary.BigEndian.Uint16(ext[:]))
+	case 127:
+		var ext [8]byte
+		if _, err = io.ReadFull(br, ext[:]); err != nil {
+			return
+		}
+		length = binary.BigEndian.Uint64(ext[:])
+	}
+	if length > wsMaxFrame {
+		err = fmt.Errorf("websocket frame too large: %d bytes", length)
+		return
+	}
+
+	var maskKey [4]byte
+	if masked {
+		if _, err = io.ReadFull(br, maskKey[:]); err != nil {
+			return
+		}
+	}
+	payload = make([]byte, length)
+	if _, err = io.ReadFull(br, payload); err != nil {
+		return
+	}
+	if masked {
+		for i := range payload {
+			payload[i] ^= maskKey[i%4]
+		}
+	}
+	return
+}
+
+// wsConn turns an already-upgraded connection into a real WebSocket byte
+// stream: Write sends one binary frame per call, Read reassembles frames
+// (including fragmented ones) and answers pings without the caller ever
+// seeing control frames.
+type wsConn struct {
+	net.Conn
+	isClient bool
+	br       *bufio.Reader // continues from wherever the HTTP upgrade parser left off
+	rbuf     []byte
+	wmu      sync.Mutex
+}
+
+func newWsConn(c net.Conn, br *bufio.Reader, isClient bool) *wsConn {
+	return &wsConn{Conn: c, br: br, isClient: isClient}
+}
+
+func (w *wsConn) Write(p []byte) (int, error) {
+	w.wmu.Lock()
+	defer w.wmu.Unlock()
+	if err := wsWriteFrame(w.Conn, w.isClient, wsOpBinary, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (w *wsConn) writeControl(opcode byte, payload []byte) error {
+	w.wmu.Lock()
+	defer w.wmu.Unlock()
+	return wsWriteFrame(w.Conn, w.isClient, opcode, payload)
+}
+
+func (w *wsConn) Read(p []byte) (int, error) {
+	for len(w.rbuf) == 0 {
+		msg, err := w.readMessage()
+		if err != nil {
+			return 0, err
+		}
+		w.rbuf = msg
+	}
+	n := copy(p, w.rbuf)
+	w.rbuf = w.rbuf[n:]
+	return n, nil
+}
+
+// readMessage reads frames until a complete data message (handling
+// fragmentation) is assembled, transparently answering pings and treating
+// pongs and a close frame appropriately.
+func (w *wsConn) readMessage() ([]byte, error) {
+	var assembled []byte
+	for {
+		fin, opcode, payload, err := wsReadFrame(w.br)
+		if err != nil {
+			return nil, err
+		}
+		switch opcode {
+		case wsOpClose:
+			return nil, io.EOF
+		case wsOpPing:
+			if err := w.writeControl(wsOpPong, payload); err != nil {
+				return nil, err
+			}
+			continue
+		case wsOpPong:
+			continue
+		case wsOpContinuation, wsOpText, wsOpBinary:
+			assembled = append(assembled, payload...)
+			if fin {
+				return assembled, nil
+			}
+			continue
+		default:
+			continue // ignore reserved/unsupported opcodes
+		}
+	}
+}
+
 // ---------------------------------------------------------------- helpers
 
 func joinStreams(a net.Conn, ar io.Reader, b net.Conn, brd io.Reader) {
@@ -336,11 +525,29 @@ type Server struct {
 
 func (s *Server) log(format string, v ...interface{}) { log.Printf(format, v...) }
 
+// nodelayListener sets TCP_NODELAY on every accepted connection before it is
+// (optionally) wrapped in TLS, so the setting applies to all transports -
+// once wrapped in a *tls.Conn there is no public way to reach the underlying
+// socket to set this after the fact.
+type nodelayListener struct{ net.Listener }
+
+func (l nodelayListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	if tc, ok := c.(*net.TCPConn); ok {
+		tc.SetNoDelay(true)
+	}
+	return c, nil
+}
+
 func (s *Server) Run() error {
-	ln, err := net.Listen("tcp", s.cfg.Listen)
+	rawLn, err := net.Listen("tcp", s.cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("cannot listen on %s: %w", s.cfg.Listen, err)
 	}
+	ln := net.Listener(nodelayListener{rawLn})
 	if s.cfg.Transport == "tls" || s.cfg.Transport == "wss" {
 		tc, err := tlsServerConfig(s.cfg.SNI)
 		if err != nil {
@@ -377,17 +584,24 @@ func (s *Server) Run() error {
 
 func (s *Server) acceptTunnel(raw net.Conn) {
 	raw.SetDeadline(time.Now().Add(20 * time.Second))
-	f := newFconn(raw)
+	br := bufio.NewReaderSize(raw, 32*1024)
+	var conn net.Conn = raw
 
 	if s.cfg.Transport == "ws" || s.cfg.Transport == "wss" {
-		if err := serverUpgrade(raw, f.br, s.cfg.Path); err != nil {
+		if err := serverUpgrade(raw, br, s.cfg.Path); err != nil {
 			if s.cfg.Verbose {
 				s.log("handshake from %s failed: %v", raw.RemoteAddr(), err)
 			}
 			raw.Close()
 			return
 		}
+		// Everything from here on is real WebSocket framing, not a raw
+		// stream - this is what lets the tunnel sit behind a WS-aware
+		// reverse proxy or CDN instead of only a passthrough TCP proxy.
+		conn = newWsConn(raw, br, false) // server frames must NOT be masked
+		br = bufio.NewReaderSize(conn, 32*1024)
 	}
+	f := &fconn{Conn: conn, br: br}
 
 	line, err := f.br.ReadString('\n')
 	if err != nil || len(line) > 4096 {
@@ -401,11 +615,11 @@ func (s *Server) acceptTunnel(raw net.Conn) {
 	}
 	if subtle.ConstantTimeCompare([]byte(h.Token), []byte(s.cfg.Token)) != 1 {
 		s.log("rejected %s: bad token", raw.RemoteAddr())
-		writeJSONLine(raw, helloReply{OK: false, Err: "bad token"})
+		writeJSONLine(conn, helloReply{OK: false, Err: "bad token"})
 		raw.Close()
 		return
 	}
-	if err := writeJSONLine(raw, helloReply{OK: true}); err != nil {
+	if err := writeJSONLine(conn, helloReply{OK: true}); err != nil {
 		raw.Close()
 		return
 	}
@@ -708,6 +922,7 @@ func (c *Client) connect(role string) (*fconn, error) {
 	if tc, ok := raw.(*net.TCPConn); ok {
 		tc.SetKeepAlive(true)
 		tc.SetKeepAlivePeriod(30 * time.Second)
+		tc.SetNoDelay(true)
 	}
 	raw.SetDeadline(time.Now().Add(20 * time.Second))
 
@@ -726,15 +941,23 @@ func (c *Client) connect(role string) (*fconn, error) {
 		raw = tconn
 	}
 
-	f := newFconn(raw)
+	br := bufio.NewReaderSize(raw, 32*1024)
+	var conn net.Conn = raw
+
 	if c.cfg.Transport == "ws" || c.cfg.Transport == "wss" {
-		if err := clientUpgrade(raw, f.br, c.cfg.SNI, c.cfg.Path); err != nil {
+		if err := clientUpgrade(raw, br, c.cfg.SNI, c.cfg.Path); err != nil {
 			raw.Close()
 			return nil, err
 		}
+		// Everything from here on is real WebSocket framing, not a raw
+		// stream - this is what lets the tunnel sit behind a WS-aware
+		// reverse proxy or CDN instead of only a passthrough TCP proxy.
+		conn = newWsConn(raw, br, true) // client frames MUST be masked
+		br = bufio.NewReaderSize(conn, 32*1024)
 	}
+	f := &fconn{Conn: conn, br: br}
 
-	if err := writeJSONLine(raw, hello{Ver: version, Token: c.cfg.Token, Role: role}); err != nil {
+	if err := writeJSONLine(conn, hello{Ver: version, Token: c.cfg.Token, Role: role}); err != nil {
 		raw.Close()
 		return nil, err
 	}

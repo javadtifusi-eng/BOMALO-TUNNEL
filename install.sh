@@ -355,7 +355,11 @@ add_forward() {
     case "$c" in
       1) add_entry "OpenVPN" udp 1194 ;;
       2) add_entry "OpenVPN" tcp 1194 ;;
-      3) add_entry "L2TP-IKE" udp 500; add_entry "L2TP-NATT" udp 4500; add_entry "L2TP" udp 1701 ;;
+      3) add_entry "L2TP-IKE" udp 500; add_entry "L2TP-NATT" udp 4500
+         echo "   ${D}port 1701 is not forwarded on purpose - with IPsec enabled,${N}"
+         echo "   ${D}L2TP data travels inside the ESP/NAT-T flow on port 4500 and${N}"
+         echo "   ${D}is delivered locally by the kernel; forwarding 1701 directly${N}"
+         echo "   ${D}bypasses IPsec and confuses the session.${N}" ;;
       4) add_entry "IKEv2" udp 500; add_entry "IKEv2-NATT" udp 4500 ;;
       5) add_entry "WireGuard" udp 51820 ;;
       6) add_entry "VLESS" tcp 443 ;;
@@ -416,8 +420,17 @@ edit_settings() {
       echo "    pool      : ${W}$(jq -r .pool "$CFG")${N}"
     fi
     echo
-    echo "   ${R}1${N}) ${W}transport${N}    ${R}2${N}) ${W}token${N}    ${R}3${N}) ${W}SNI${N}    ${R}4${N}) ${W}path${N}"
-    echo "   ${R}5${N}) ${W}address / port${N}                 ${R}6${N}) ${W}pool${N} ${D}(client)${N}"
+    echo "   ${R}1${N}) ${W}transport${N}    ${D}tcp / tls / ws / wss${N}"
+    echo "   ${R}2${N}) ${W}token${N}        ${D}shared secret - must match on both servers${N}"
+    echo "   ${R}3${N}) ${W}SNI${N}          ${D}fake hostname for tls/ws/wss${N}"
+    echo "   ${R}4${N}) ${W}path${N}         ${D}HTTP path for ws/wss${N}"
+    if [ "$mode" = server ]; then
+      echo "   ${R}5${N}) ${W}tunnel port${N}  ${D}what the foreign server dials${N}"
+    else
+      echo "   ${R}5${N}) ${W}Iran ip:port${N} ${D}where this client connects${N}"
+      echo "   ${R}6${N}) ${W}pool${N}         ${D}warm connections kept open${N}"
+    fi
+    echo "   ${R}7${N}) ${W}Performance preset${N}  ${D}BBR + buffer tuning${N}"
     echo "   ${R}0${N}) ${W}back${N}"
     local c v tmp; read -r -p "  ${W}choice:${N} " c
     case "$c" in
@@ -433,6 +446,7 @@ edit_settings() {
       6) [ "$mode" = client ] || { warn "client only"; continue; }
          v=$(ask "warm connections" 8)
          tmp=$(jq --argjson p "$v" '.pool=$p' "$CFG") && echo "$tmp" | jq . > "$CFG" && ok "pool = $v" ;;
+      7) performance ;;
       0) break ;;
       *) warn "invalid choice" ;;
     esac
@@ -486,6 +500,42 @@ watchdog() {
       *) warn "invalid choice" ;;
     esac
   done
+}
+
+apply_perf_preset() {
+  local level="$1" rmem wmem
+  case "$level" in
+    1) rmem=4194304;  wmem=4194304  ;;   # Balance - light on RAM, small/shared VPS
+    2) rmem=16777216; wmem=16777216 ;;   # Turbo - tuned default for Iran<->abroad links
+    3) rmem=33554432; wmem=33554432 ;;   # Aggressive - max headroom, more RAM
+    *) warn "invalid preset"; return ;;
+  esac
+  sed -i '/# Bomalo Tunnel performance preset/,/# end Bomalo Tunnel preset/d' /etc/sysctl.conf
+  {
+    echo "# Bomalo Tunnel performance preset"
+    echo "net.core.default_qdisc=fq"
+    echo "net.ipv4.tcp_congestion_control=bbr"
+    echo "net.core.rmem_max=$rmem"
+    echo "net.core.wmem_max=$wmem"
+    echo "# end Bomalo Tunnel preset"
+  } >> /etc/sysctl.conf
+  sysctl -p >/dev/null 2>&1
+  ok "applied - tcp_congestion_control is now $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
+}
+
+performance() {
+  echo
+  echo "  ${W}${BD}Performance preset${N}  ${D}applies BBR congestion control + socket buffer sizing${N}"
+  echo "   ${R}1${N}) ${W}Balance${N}      ${D}light on RAM - small or shared VPS${N}"
+  echo "   ${R}2${N}) ${W}Turbo${N}        ${D}recommended - tuned for Iran<->abroad links${N}"
+  echo "   ${R}3${N}) ${W}Aggressive${N}   ${D}max throughput headroom - needs more RAM${N}"
+  echo "   ${R}0${N}) ${W}back${N}"
+  local c; read -r -p "  ${W}choice:${N} " c
+  case "$c" in
+    1|2|3) apply_perf_preset "$c" ;;
+    0) return ;;
+    *) warn "invalid choice" ;;
+  esac
 }
 
 uninstall() {

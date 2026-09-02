@@ -75,13 +75,15 @@ property of any userspace relay, not a bug.
 |---|---|
 | `tcp` | raw stream, fastest, no disguise |
 | `tls` | TLS 1.2+ with a self-signed certificate and a fake SNI |
-| `ws` | HTTP `Upgrade: websocket` handshake, then a raw stream |
-| `wss` | the same handshake inside TLS — best against DPI |
+| `ws` | HTTP `Upgrade: websocket` handshake, then real RFC 6455 frames |
+| `wss` | the same, inside TLS — best against DPI, and safe to sit behind a WebSocket-aware reverse proxy or CDN |
 
-Note on `ws`/`wss`: the handshake is a byte-accurate WebSocket upgrade, but the
-payload afterwards is a raw stream rather than RFC 6455 frames. That defeats
-passive DPI; it is not yet enough to sit behind a CDN or an nginx WebSocket
-proxy. Full framing is a later pass.
+Note on `ws`/`wss`: both the handshake and the traffic after it are real
+WebSocket — every tunnel message is sent as one binary frame (masked when
+sent by the client, per RFC 6455), fragmented frames from an intermediary
+are reassembled transparently, and pings are answered automatically. This
+is what makes it possible to place the Iran-side server behind an nginx
+WebSocket proxy or a CDN instead of only a plain TCP passthrough.
 
 ## Configuration
 
@@ -188,10 +190,12 @@ OpenVPN (TCP/UDP)، L2TP/IPsec، IKEv2، WireGuard، VLESS/VMess/Trojan، پنل
 `tcp` سریع‌ترین و بدون استتار، `tls` با گواهی self-signed و SNI جعلی،
 `ws` دست‌دادن HTTP/WebSocket و `wss` همان دست‌دادن داخل TLS (بهترین حالت مقابل DPI).
 
-دربارهٔ `ws`/`wss`: دست‌دادن دقیقاً مطابق WebSocket است اما دادهٔ بعد از آن به‌صورت
-استریم خام منتقل می‌شود، نه فریم‌های RFC 6455. این کار DPI غیرفعال را دور می‌زند
-ولی هنوز برای عبور از CDN یا پراکسی WebSocket نginx کافی نیست. فریم‌بندی کامل در
-مرحلهٔ بعد اضافه می‌شود.
+دربارهٔ `ws`/`wss`: هم دست‌دادن، هم دادهٔ بعد از آن، هر دو WebSocket واقعی
+هستند — هر پیام تانل به‌صورت یک فریم باینری RFC 6455 فرستاده می‌شود (با
+ماسک، وقتی کلاینت می‌فرستد)، فریم‌های تکه‌شده توسط یک واسط دوباره سرهم
+می‌شوند، و پینگ‌ها خودکار جواب داده می‌شوند. همین باعث می‌شود بشود سرور
+ایران را پشت یک پراکسی WebSocket واقعی (nginx) یا یک CDN گذاشت، نه فقط
+یک پاس‌ثرو TCP ساده.
 
 ## نکات پیکربندی
 
