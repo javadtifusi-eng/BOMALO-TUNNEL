@@ -488,6 +488,8 @@ add_forward() {
          echo "   ${W}Is IPsec actually configured on the foreign server for this?${N}"
          echo "     ${R}1${N}) ${W}Yes${N}  ${D}strongSwan/IPsec is set up (standard, encrypted L2TP/IPsec)${N}"
          echo "     ${R}2${N}) ${W}No${N}   ${D}plain L2TP only, no encryption - forwards port 1701 directly${N}"
+         echo "   ${D}Neither yet? Run l2tp-ipsec-server.sh on the FOREIGN server first:${N}"
+         echo "   ${D}bash <(curl -fsSL $RAW/l2tp-ipsec-server.sh)${N}"
          local l2mode; read -r -p "  ${W}choice${N} [1]: " l2mode
          if [ "$l2mode" = "2" ]; then
            add_entry "L2TP" udp 1701
