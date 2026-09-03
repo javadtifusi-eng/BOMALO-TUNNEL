@@ -76,6 +76,18 @@ banner() {
 
 pause() { echo; read -r -p "  ${D}press Enter${N} " _; }
 
+# step clears the screen and prints a consistent section header, so moving
+# into a new step of the wizard doesn't leave the previous screen's menu
+# still sitting above it - one header style (cyan, bold, "▸" marker) used
+# everywhere instead of every function inventing its own.
+step() {
+  clear 2>/dev/null || true
+  echo
+  echo "  ${C}${BD}▸ $1${N}"
+  [ -n "${2:-}" ] && echo "  ${D}$2${N}"
+  echo "  ${D}$(rule 34 "─")${N}"
+}
+
 require_root() { [ "$(id -u)" = 0 ] || die "run this script as root (sudo -i)"; }
 
 pkg_install() {
@@ -195,6 +207,7 @@ install_shortcut() {
 }
 
 install_binary() {
+  step "Install / update the binary"
   stop_legacy
   local a; a=$(arch_tag)
   info "looking for a prebuilt binary"
@@ -276,7 +289,7 @@ ask() {
 pick_transport() {
   {
     echo
-    echo "  ${W}Transport:${N}"
+    echo "  ${W}${BD}Transport:${N}"
     echo "    ${R}1${N}) ${W}tls${N}      TLS with a self-signed certificate"
     echo "    ${R}2${N}) ${W}wss${N}      HTTP/WebSocket upgrade inside TLS  ${D}(best against DPI)${N}"
     echo "    ${R}3${N}) ${W}ws${N}       plain HTTP/WebSocket upgrade"
@@ -323,8 +336,7 @@ arvan_hint() {
 # ------------------------------------------------------------------ setup
 
 setup_server() {
-  echo
-  info "Configuring this machine as the IRAN server (public entry point)"
+  step "Set up as IRAN side" "public entry point - owns the ports users connect to"
   local port token transport sni path cfg ip
   port=$(ask "Tunnel port (the foreign server dials this)" 8443)
   token=$(ask "Shared token (leave empty to generate)" "")
@@ -346,7 +358,7 @@ setup_server() {
   echo
   ok "server configured"
   echo
-  echo "  ${W}Copy these values to the foreign server:${N}"
+  echo "  ${W}${BD}Copy these values to the foreign server:${N}"
   echo "    server    : ${W}$ip:$port${N}"
   echo "    token     : ${W}$token${N}"
   echo "    transport : ${W}$transport${N}"
@@ -359,8 +371,7 @@ setup_server() {
 }
 
 setup_client() {
-  echo
-  info "Configuring this machine as the FOREIGN server (exit node)"
+  step "Set up as FOREIGN side" "exit node - dials out to the Iran server, no inbound ports needed"
   local ip port token transport sni path pool cfg
   ip=$(ask "Iran server IP" "")
   [ -z "$ip" ] && { warn "IP is required"; return; }
@@ -401,9 +412,8 @@ add_entry() {
 add_forward() {
   [ -f "$CFG" ] || { warn "no config yet, run option 2 first"; return; }
   [ "$(jq -r .mode "$CFG")" = "server" ] || { warn "forwards belong on the Iran server"; return; }
+  step "Add forwarded ports" "Which service should this Iran server publish?"
   while true; do
-    echo
-    echo "  ${W}Which service should this Iran server publish?${N}"
     echo "    ${R}1${N}) ${W}OpenVPN${N}         UDP 1194"
     echo "    ${R}2${N}) ${W}OpenVPN${N}         TCP 1194"
     echo "    ${R}3${N}) ${W}L2TP/IPsec${N}      UDP 500, 4500"
@@ -434,6 +444,7 @@ add_forward() {
       0) break ;;
       *) warn "invalid choice" ;;
     esac
+    echo
   done
   list_forwards
 }
@@ -441,13 +452,14 @@ add_forward() {
 list_forwards() {
   [ -f "$CFG" ] || return
   echo
-  echo "  ${W}Current forwards:${N}"
+  echo "  ${W}${BD}Current forwards:${N}"
   jq -r '.forwards[]? | "    \(.net)\t\(.listen)\t->  \(.target)\t\(.name // "")"' "$CFG" | expand -t 12
   echo
 }
 
 del_forward() {
   [ -f "$CFG" ] || { warn "no config"; return; }
+  step "Remove a forwarded port"
   list_forwards
   local l tmp; l=$(ask "listen address to remove (e.g. 0.0.0.0:1194)" "")
   [ -z "$l" ] && return
@@ -469,8 +481,7 @@ edit_settings() {
   [ -f "$CFG" ] || { warn "no configuration yet"; return; }
   local mode; mode=$(jq -r .mode "$CFG")
   while true; do
-    echo
-    echo "  ${W}${BD}Settings${N} ${D}($mode)${N}"
+    step "Settings" "$mode"
     echo "    transport : ${W}$(jq -r .transport "$CFG")${N}"
     echo "    token     : ${W}$(jq -r .token "$CFG")${N}"
     echo "    sni       : ${W}$(jq -r .sni "$CFG")${N}"
@@ -497,21 +508,23 @@ edit_settings() {
     echo "   ${R}0${N}) ${W}back${N}"
     local c v tmp; read -r -p "  ${W}choice:${N} " c
     case "$c" in
-      1) v=$(pick_transport); set_field transport "$v" ;;
-      2) v=$(ask "new token" ""); [ -n "$v" ] && set_field token "$v" ;;
-      3) v=$(ask "new SNI" "www.bing.com"); set_field sni "$v" ;;
-      4) v=$(ask "new path" "/tunnel"); set_field path "$v" ;;
+      1) v=$(pick_transport); set_field transport "$v"; pause ;;
+      2) v=$(ask "new token" ""); [ -n "$v" ] && set_field token "$v"; pause ;;
+      3) v=$(ask "new SNI" "www.bing.com"); set_field sni "$v"; pause ;;
+      4) v=$(ask "new path" "/tunnel"); set_field path "$v"; pause ;;
       5) if [ "$mode" = server ]; then
            v=$(ask "new tunnel port" 8443); set_field listen "0.0.0.0:$v"; open_port "$v" tcp
          else
            v=$(ask "Iran server ip:port" "$(jq -r .server "$CFG")"); set_field server "$v"
-         fi ;;
-      6) [ "$mode" = client ] || { warn "client only"; continue; }
+         fi
+         pause ;;
+      6) [ "$mode" = client ] || { warn "client only"; sleep 1; continue; }
          v=$(ask "warm connections / mux links" 8)
-         tmp=$(jq --argjson p "$v" '.pool=$p | .mux_con=$p' "$CFG") && echo "$tmp" | jq . > "$CFG" && ok "pool = mux_con = $v" ;;
-      7) performance ;;
+         tmp=$(jq --argjson p "$v" '.pool=$p | .mux_con=$p' "$CFG") && echo "$tmp" | jq . > "$CFG" && ok "pool = mux_con = $v"
+         pause ;;
+      7) performance; pause ;;
       0) break ;;
-      *) warn "invalid choice" ;;
+      *) warn "invalid choice"; sleep 1 ;;
     esac
   done
   echo
@@ -520,7 +533,7 @@ edit_settings() {
 }
 
 show_status() {
-  echo
+  step "Status"
   systemctl status tifusi --no-pager -l 2>/dev/null | head -12
   echo
   if [ -f "$CFG" ]; then
@@ -585,10 +598,9 @@ wg_status() {
 # real kernel NAT (exactly like a home router forwarding a port), which
 # keeps that identity consistent the way IPsec expects.
 setup_wg_bridge() {
+  step "WireGuard bridge" "a private server-to-server link, for protocols like L2TP/IPsec"
   ensure_wg
   local pub; pub=$(wg_own_key)
-  echo
-  echo "  ${W}${BD}WireGuard bridge${N}  ${D}a private server-to-server link, for protocols like L2TP/IPsec${N}"
   echo "   ${R}1${N}) ${W}This is the IRAN side${N}"
   echo "   ${R}2${N}) ${W}This is the FOREIGN side${N}"
   echo "   ${R}0${N}) ${W}back${N}"
@@ -674,19 +686,18 @@ EOF
 watchdog() {
   command -v crontab >/dev/null 2>&1 || pkg_install cron >/dev/null 2>&1
   while true; do
-    echo
-    echo "  ${W}${BD}Watchdog${N}  ${D}current:${N} $( [ -f "$CRON" ] && echo "${G}enabled${N}" || echo "${W}disabled${N}" )"
+    step "Watchdog / cron" "current: $( [ -f "$CRON" ] && echo enabled || echo disabled )"
     echo "   ${R}1${N}) ${W}check every 5 minutes, restart if the service is down${N}"
     echo "   ${R}2${N}) ${W}the same, plus a daily restart at 04:00${N}"
     echo "   ${R}3${N}) ${W}disable${N}"
     echo "   ${R}0${N}) ${W}back${N}"
     local c; read -r -p "  ${W}choice:${N} " c
     case "$c" in
-      1) write_cron 0 ;;
-      2) write_cron 1 ;;
-      3) rm -f "$CRON"; ok "watchdog disabled" ;;
+      1) write_cron 0; pause ;;
+      2) write_cron 1; pause ;;
+      3) rm -f "$CRON"; ok "watchdog disabled"; pause ;;
       0) break ;;
-      *) warn "invalid choice" ;;
+      *) warn "invalid choice"; sleep 1 ;;
     esac
   done
 }
@@ -713,8 +724,7 @@ apply_perf_preset() {
 }
 
 performance() {
-  echo
-  echo "  ${W}${BD}Performance preset${N}  ${D}applies BBR congestion control + socket buffer sizing${N}"
+  step "Performance preset" "applies BBR congestion control + socket buffer sizing"
   echo "   ${R}1${N}) ${W}Balance${N}      ${D}light on RAM - small or shared VPS${N}"
   echo "   ${R}2${N}) ${W}Turbo${N}        ${D}recommended - tuned for Iran<->abroad links${N}"
   echo "   ${R}3${N}) ${W}Aggressive${N}   ${D}max throughput headroom - needs more RAM${N}"
@@ -728,6 +738,7 @@ performance() {
 }
 
 uninstall() {
+  step "Uninstall Tifusi Tunnel"
   read -r -p "  ${W}Remove Tifusi Tunnel completely?${N} [y/N]: " a
   [[ "$a" =~ ^[Yy]$ ]] || return
   systemctl disable --now tifusi >/dev/null 2>&1
@@ -756,8 +767,8 @@ manage() {
     case "$c" in
       1) edit_settings; pause ;;
       2) show_status; pause ;;
-      3) journalctl -u tifusi -f -n 50 ;;
-      4) restart_service; pause ;;
+      3) step "Live logs" "Ctrl+C to go back"; journalctl -u tifusi -f -n 50 ;;
+      4) step "Restart service"; restart_service; pause ;;
       5) watchdog ;;
       6) setup_wg_bridge; wg_status; pause ;;
       7) uninstall; pause ;;
