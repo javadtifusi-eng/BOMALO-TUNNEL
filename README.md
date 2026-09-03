@@ -8,8 +8,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/language-Go-00ADD8?style=flat-square&logo=go&logoColor=white">
-  <img src="https://img.shields.io/badge/dependencies-stdlib%20only-2ea44f?style=flat-square">
-  <img src="https://img.shields.io/badge/transport-TCP%20%7C%20TLS%20%7C%20WS%20%7C%20WSS-8957e5?style=flat-square">
+  <img src="https://img.shields.io/badge/dependencies-stdlib%20%2B%202-2ea44f?style=flat-square">
+  <img src="https://img.shields.io/badge/transport-TCP%20%7C%20TLS%20%7C%20WS%20%7C%20WSS%20%7C%20UDP-8957e5?style=flat-square">
   <img src="https://img.shields.io/badge/inbound%20ports%20abroad-0-c8102e?style=flat-square">
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
 </p>
@@ -159,6 +159,18 @@ For a mux transport (`tcpmux`/`wsmux`/`wssmux`), `mux_con` plays the
 equivalent role: it is how many physical connections carry all the
 multiplexed sessions.
 
+## Web panel
+
+An optional bilingual (English/Persian) browser admin UI, served over its
+own HTTPS listener by the same binary - edit settings, add/remove
+forwarded ports, restart the service and watch live logs without SSH.
+Off by default; enable it from `bm` → `Manage` → `Web panel`, which asks
+for a username, a password (hashed with bcrypt, never stored in plain
+text) and a port, then prints the URL. The certificate is self-signed
+like the `tls` transport, so the browser will warn once - accept it to
+continue. Since it's reachable directly from the internet, pick a real
+password; there's no rate-limiting beyond what the OS/firewall provide.
+
 ## Commands
 
 ```bash
@@ -166,6 +178,7 @@ bm                                       # open the management menu
 tifusi -config /etc/tifusi/config.json   # run in the foreground
 tifusi -check                            # validate the config
 tifusi -gen-token                        # print a new token
+tifusi -panel-hash "a password"          # print its bcrypt hash (for the web panel)
 systemctl restart tifusi
 journalctl -u tifusi -f
 ```
@@ -327,11 +340,23 @@ ping 10.200.0.1
   (اسکریپت خودش این کار را انجام می‌دهد، ولی اگر فایروال/پنل جداگانه دارید
   چک کنید).
 
+## پنل وب
+
+یک پنل مدیریت تحت مرورگر و دوزبانه (انگلیسی/فارسی)، که روی یک HTTPS جداگانه
+توسط همون باینری سرو می‌شه — ویرایش تنظیمات، اضافه/حذف پورت‌های فوروارد،
+ری‌استارت سرویس و دیدن لاگ زنده، بدون نیاز به SSH. پیش‌فرض خاموشه؛ از منوی
+`bm` → `Manage` → `Web panel` فعالش کنید — یه نام کاربری، رمز عبور (با
+bcrypt هش می‌شه، هیچ‌وقت به‌صورت متن ساده ذخیره نمی‌شه) و یه پورت می‌پرسه،
+بعد آدرس رو چاپ می‌کنه. گواهیش self-signed هست (مثل ترانسپورت `tls`)، پس
+مرورگر یه‌بار هشدار می‌ده — قبولش کنید تا ادامه بدید. چون مستقیم روی
+اینترنت در دسترسه، یه رمز واقعی و قوی انتخاب کنید.
+
 ## دستورها
 
 ```bash
-tifusi -check        # بررسی صحت کانفیگ
-tifusi -gen-token    # ساخت توکن جدید
+tifusi -check                 # بررسی صحت کانفیگ
+tifusi -gen-token             # ساخت توکن جدید
+tifusi -panel-hash "رمز"      # چاپ هش bcrypt آن (برای پنل وب)
 systemctl restart tifusi
 journalctl -u tifusi -f
 ```
@@ -421,11 +446,24 @@ IPsec требует, чтобы адрес источника оставалс�
 играет `mux_con` — количество физических соединений, несущих все
 мультиплексированные сессии.
 
+## Веб-панель
+
+Опциональная двуязычная (английский/персидский) веб-панель администрирования,
+работающая на собственном HTTPS-порту в том же процессе - редактирование
+настроек, добавление/удаление проброшенных портов, перезапуск сервиса и
+просмотр логов в реальном времени без SSH. По умолчанию выключена; включается
+из `bm` → `Manage` → `Web panel` - потребуется имя пользователя, пароль
+(хешируется bcrypt, никогда не хранится в открытом виде) и порт, после чего
+будет выведен URL. Сертификат самоподписанный, как у транспорта `tls`, так
+что браузер один раз предупредит - примите это для продолжения. Поскольку
+панель доступна прямо из интернета, выберите настоящий надёжный пароль.
+
 ## Команды
 
 ```bash
-tifusi -check        # проверить конфиг
-tifusi -gen-token    # сгенерировать новый токен
+tifusi -check                  # проверить конфиг
+tifusi -gen-token              # сгенерировать новый токен
+tifusi -panel-hash "пароль"    # вывести его bcrypt-хеш (для веб-панели)
 systemctl restart tifusi
 journalctl -u tifusi -f
 ```
