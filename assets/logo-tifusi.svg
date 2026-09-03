@@ -1,61 +1,51 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 820" width="800" height="820" role="img" aria-label="Tifusi Tunnel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 900" width="800" height="900" role="img" aria-label="Tifusi Tunnel">
   <defs>
-    <radialGradient id="tt-glow" cx="50%" cy="36%" r="62%">
+    <radialGradient id="tt-glow" cx="50%" cy="32%" r="62%">
       <stop offset="0%" stop-color="#1c1712"/>
       <stop offset="55%" stop-color="#0B0D10"/>
       <stop offset="100%" stop-color="#0B0D10"/>
     </radialGradient>
   </defs>
 
-  <rect x="0" y="0" width="800" height="820" fill="url(#tt-glow)"/>
+  <rect x="0" y="0" width="800" height="900" fill="url(#tt-glow)"/>
 
   <!-- double-headed Persepolis capital -->
-  <g fill="none" stroke="#F4EEE2" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+  <g fill="none" stroke="#F4EEE2" stroke-linejoin="round" stroke-linecap="round">
 
-    <!-- right head + neck, smooth silhouette -->
-    <path d="M400,320
-             C415,270 450,230 490,210
-             C520,195 555,192 575,205
-             C565,180 545,168 515,165
-             C480,175 430,230 400,320 Z"/>
-    <!-- ear -->
-    <path d="M505,168 L522,135 L512,162"/>
-    <!-- eye -->
-    <circle cx="540" cy="190" r="4" fill="#F4EEE2" stroke="none"/>
-    <!-- mane ticks -->
-    <path d="M470,195 L485,178 M445,225 L462,210 M422,255 L440,242 M405,285 L425,275" stroke-width="3.5"/>
-    <!-- front leg -->
-    <path d="M414,300 L406,352 L424,374 L410,422 L428,442"/>
-
-    <!-- mirrored left head + neck + leg -->
-    <g transform="translate(800,0) scale(-1,1)">
-      <path d="M400,320
-               C415,270 450,230 490,210
-               C520,195 555,192 575,205
-               C565,180 545,168 515,165
-               C480,175 430,230 400,320 Z"/>
-      <path d="M505,168 L522,135 L512,162"/>
-      <circle cx="540" cy="190" r="4" fill="#F4EEE2" stroke="none"/>
-      <path d="M470,195 L485,178 M445,225 L462,210 M422,255 L440,242 M405,285 L425,275" stroke-width="3.5"/>
-      <path d="M414,300 L406,352 L424,374 L410,422 L428,442"/>
+    <!-- right head -->
+    <g>
+      <path d="M400,340 L420,300 L450,270 L478,255 L510,258 L548,255 L585,248 L588,238 L565,222 L540,195 L515,168 L495,152 L478,158 L455,180 L445,210 L430,245 L415,285 Z" stroke-width="6"/>
+      <path d="M485,155 L500,120 L505,150" stroke-width="5"/>
+      <circle cx="525" cy="195" r="5" fill="#F4EEE2" stroke="none"/>
+      <path d="M494,168 L471,190 L461,220 L446,255 L431,295" stroke-width="3.5"/>
+      <path d="M465,185 L478,170 M450,215 L465,202 M435,250 L450,238" stroke-width="4"/>
     </g>
 
-    <!-- saddle beam where the two necks meet -->
-    <path d="M370,320 L430,320"/>
+    <!-- mirrored left head -->
+    <g transform="translate(800,0) scale(-1,1)">
+      <path d="M400,340 L420,300 L450,270 L478,255 L510,258 L548,255 L585,248 L588,238 L565,222 L540,195 L515,168 L495,152 L478,158 L455,180 L445,210 L430,245 L415,285 Z" stroke-width="6"/>
+      <path d="M485,155 L500,120 L505,150" stroke-width="5"/>
+      <circle cx="525" cy="195" r="5" fill="#F4EEE2" stroke="none"/>
+      <path d="M494,168 L471,190 L461,220 L446,255 L431,295" stroke-width="3.5"/>
+      <path d="M465,185 L478,170 M450,215 L465,202 M435,250 L450,238" stroke-width="4"/>
+    </g>
+
+    <!-- saddle where the two necks meet -->
+    <path d="M400,320 L400,340" stroke-width="6"/>
 
     <!-- capital block -->
-    <path d="M330,320 L470,320 L446,372 L354,372 Z"/>
+    <path d="M330,338 L470,338 L446,390 L354,390 Z" stroke-width="5"/>
 
     <!-- fluted column -->
-    <path d="M362,372 L438,372 L420,620 L380,620 Z"/>
-    <path d="M378,384 L366,610 M394,384 L390,612 M406,384 L410,612 M422,384 L434,610"
+    <path d="M362,390 L438,390 L420,610 L380,610 Z" stroke-width="5"/>
+    <path d="M377,391 L388,609 M392,391 L396,609 M408,391 L404,609 M423,391 L412,609"
           stroke-width="2.5"/>
 
     <!-- base -->
-    <path d="M366,620 L434,620 L440,648 L360,648 Z"/>
+    <path d="M366,610 L434,610 L440,636 L360,636 Z" stroke-width="5"/>
   </g>
 
   <!-- wordmark -->
-  <text x="400" y="726" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="62" letter-spacing="6" fill="#F4EEE2">TIFUSI TUNNEL</text>
-  <text x="400" y="762" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="18" letter-spacing="5" fill="#8D93A0">REVERSE TUNNEL &#183; CLIENT-INITIATED</text>
+  <text x="400" y="716" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="62" letter-spacing="6" fill="#F4EEE2">TIFUSI TUNNEL</text>
+  <text x="400" y="752" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="18" letter-spacing="5" fill="#8D93A0">REVERSE TUNNEL &#183; CLIENT-INITIATED</text>
 </svg>
