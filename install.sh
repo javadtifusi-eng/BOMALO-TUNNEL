@@ -337,7 +337,7 @@ arvan_hint() {
 
 setup_server() {
   step "Set up as IRAN side" "public entry point - owns the ports users connect to"
-  local port token transport sni path cfg ip
+  local port token transport sni path cfg ip use_cdn=""
   port=$(ask "Tunnel port (the foreign server dials this)" 8443)
   token=$(ask "Shared token (leave empty to generate)" "")
   [ -z "$token" ] && token=$("$BIN" -gen-token)
@@ -346,7 +346,15 @@ setup_server() {
     read -r -p "  ${W}Sit this behind a CDN like ArvanCloud?${N} [y/N]: " use_cdn
     [[ "$use_cdn" =~ ^[Yy]$ ]] && arvan_hint
   fi
-  sni=$(ask "SNI / fake hostname" "www.bing.com")
+  if [[ "$use_cdn" =~ ^[Yy]$ ]]; then
+    sni=$(ask "Your ArvanCloud domain (used as SNI - not a fake one)" "")
+    while [ -z "$sni" ]; do
+      warn "a real domain is required when fronting through a CDN"
+      sni=$(ask "Your ArvanCloud domain (used as SNI - not a fake one)" "")
+    done
+  else
+    sni=$(ask "SNI / fake hostname" "www.bing.com")
+  fi
   path=$(ask "HTTP path (ws/wss only)" "/tunnel")
 
   cfg=$(jq -n --arg l "0.0.0.0:$port" --arg t "$transport" --arg tok "$token" \
