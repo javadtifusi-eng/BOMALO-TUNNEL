@@ -80,6 +80,7 @@ property of any userspace relay, not a bug.
 | `tcpmux` | like `tcp`, but multiplexed — see below |
 | `wsmux` | like `ws`, but multiplexed |
 | `wssmux` | like `wss`, but multiplexed |
+| `udp` | raw UDP via [KCP](https://github.com/xtaci/kcp-go), no disguise — fast retransmit, good on lossy links |
 
 Note on `ws`/`wss`: both the handshake and the traffic after it are real
 WebSocket — every tunnel message is sent as one binary frame (masked when

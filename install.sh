@@ -282,11 +282,13 @@ pick_transport() {
     echo "    ${R}5${N}) ${W}wssmux${N}   like wss, multiplexed  ${D}(fewer sockets under many sessions)${N}"
     echo "    ${R}6${N}) ${W}wsmux${N}    like ws, multiplexed"
     echo "    ${R}7${N}) ${W}tcpmux${N}   like tcp, multiplexed"
+    echo "    ${R}8${N}) ${W}udp${N}      raw UDP (KCP)  ${D}fast, no TLS, good on lossy links${N}"
   } >&2
   local c; read -r -p "  ${W}choice${N} [1]: " c
   case "${c:-1}" in
     2) echo wss ;; 3) echo ws ;; 4) echo tcp ;;
     5) echo wssmux ;; 6) echo wsmux ;; 7) echo tcpmux ;;
+    8) echo udp ;;
     *) echo tls ;;
   esac
 }

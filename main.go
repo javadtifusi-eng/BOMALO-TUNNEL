@@ -40,6 +40,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	kcp "github.com/xtaci/kcp-go/v5"
 )
 
 const version = "1.0.0"
@@ -64,7 +66,7 @@ type Config struct {
 	Mode      string    `json:"mode"`      // server | client
 	Listen    string    `json:"listen"`    // server only: tunnel listen address
 	Server    string    `json:"server"`    // client only: iran_ip:tunnel_port
-	Transport string    `json:"transport"` // tcp | tls | ws | wss | tcpmux | wsmux | wssmux
+	Transport string    `json:"transport"` // tcp | tls | ws | wss | tcpmux | wsmux | wssmux | udp
 	Token     string    `json:"token"`
 	SNI       string    `json:"sni"`     // TLS server name / certificate CN
 	Path      string    `json:"path"`    // HTTP path used by ws/wss/wsmux/wssmux
@@ -114,9 +116,9 @@ func (c *Config) validate() error {
 		return fmt.Errorf("mode must be \"server\" or \"client\", got %q", c.Mode)
 	}
 	switch c.Transport {
-	case "tcp", "tls", "ws", "wss", "tcpmux", "wsmux", "wssmux":
+	case "tcp", "tls", "ws", "wss", "tcpmux", "wsmux", "wssmux", "udp":
 	default:
-		return fmt.Errorf("transport must be tcp, tls, ws, wss, tcpmux, wsmux or wssmux, got %q", c.Transport)
+		return fmt.Errorf("transport must be tcp, tls, ws, wss, tcpmux, wsmux, wssmux or udp, got %q", c.Transport)
 	}
 	if len(c.Token) < 8 {
 		return errors.New("token must be at least 8 characters")
@@ -243,6 +245,20 @@ func tlsServerConfig(sni string) (*tls.Config, error) {
 		MinVersion:   tls.VersionTLS12,
 		NextProtos:   []string{"http/1.1"},
 	}, nil
+}
+
+// tuneKCP configures a KCP session for the "udp" transport: fast mode (no
+// Nagle-style delay, aggressive retransmit), a generous window so the
+// multi-connection pool doesn't stall on one slow link, and stream mode so
+// Read/Write behave like a plain byte stream instead of preserving message
+// boundaries - required since fconn's framing already does that itself.
+func tuneKCP(sess *kcp.UDPSession) {
+	sess.SetStreamMode(true)
+	sess.SetWriteDelay(false)
+	sess.SetNoDelay(1, 10, 2, 1)
+	sess.SetWindowSize(1024, 1024)
+	sess.SetMtu(1350)
+	sess.SetACKNoDelay(true)
 }
 
 // wsKey/wsAccept keep the handshake byte-identical to a real WebSocket upgrade.
@@ -581,17 +597,26 @@ func (l nodelayListener) Accept() (net.Conn, error) {
 }
 
 func (s *Server) Run() error {
-	rawLn, err := net.Listen("tcp", s.cfg.Listen)
-	if err != nil {
-		return fmt.Errorf("cannot listen on %s: %w", s.cfg.Listen, err)
-	}
-	ln := net.Listener(nodelayListener{rawLn})
-	if s.cfg.Transport == "tls" || s.cfg.Transport == "wss" || s.cfg.Transport == "wssmux" {
-		tc, err := tlsServerConfig(s.cfg.SNI)
+	var ln net.Listener
+	if s.cfg.Transport == "udp" {
+		kln, err := kcp.ListenWithOptions(s.cfg.Listen, nil, 0, 0)
 		if err != nil {
-			return err
+			return fmt.Errorf("cannot listen on %s: %w", s.cfg.Listen, err)
 		}
-		ln = tls.NewListener(ln, tc)
+		ln = kln
+	} else {
+		rawLn, err := net.Listen("tcp", s.cfg.Listen)
+		if err != nil {
+			return fmt.Errorf("cannot listen on %s: %w", s.cfg.Listen, err)
+		}
+		ln = net.Listener(nodelayListener{rawLn})
+		if s.cfg.Transport == "tls" || s.cfg.Transport == "wss" || s.cfg.Transport == "wssmux" {
+			tc, err := tlsServerConfig(s.cfg.SNI)
+			if err != nil {
+				return err
+			}
+			ln = tls.NewListener(ln, tc)
+		}
 	}
 	s.log("tunnel listening on %s (%s)", s.cfg.Listen, s.cfg.Transport)
 
@@ -620,6 +645,9 @@ func (s *Server) Run() error {
 				continue
 			}
 			return err
+		}
+		if sess, ok := c.(*kcp.UDPSession); ok {
+			tuneKCP(sess)
 		}
 		go s.acceptTunnel(c)
 	}
@@ -968,14 +996,25 @@ func (c *Client) Run() error {
 }
 
 func (c *Client) connect(role string) (*fconn, error) {
-	raw, err := net.DialTimeout("tcp", c.cfg.Server, 15*time.Second)
-	if err != nil {
-		return nil, err
-	}
-	if tc, ok := raw.(*net.TCPConn); ok {
-		tc.SetKeepAlive(true)
-		tc.SetKeepAlivePeriod(30 * time.Second)
-		tc.SetNoDelay(true)
+	var raw net.Conn
+	if c.cfg.Transport == "udp" {
+		sess, err := kcp.DialWithOptions(c.cfg.Server, nil, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+		tuneKCP(sess)
+		raw = sess
+	} else {
+		tconn, err := net.DialTimeout("tcp", c.cfg.Server, 15*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		if tc, ok := tconn.(*net.TCPConn); ok {
+			tc.SetKeepAlive(true)
+			tc.SetKeepAlivePeriod(30 * time.Second)
+			tc.SetNoDelay(true)
+		}
+		raw = tconn
 	}
 	raw.SetDeadline(time.Now().Add(20 * time.Second))
 
