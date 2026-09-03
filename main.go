@@ -62,18 +62,30 @@ type Forward struct {
 	Target string `json:"target"` // resolved ON THE FOREIGN SERVER, e.g. 127.0.0.1:1194
 }
 
+// PanelConfig turns on the optional web admin panel, served over its own
+// HTTPS listener (self-signed, like the "tls" transport) by the same
+// process. It is off unless explicitly enabled with a username and a
+// bcrypt password hash - see "-panel-hash" in main().
+type PanelConfig struct {
+	Enabled      bool   `json:"enabled"`
+	Listen       string `json:"listen"` // e.g. 0.0.0.0:9443
+	Username     string `json:"username"`
+	PasswordHash string `json:"password_hash"` // bcrypt, from -panel-hash
+}
+
 type Config struct {
-	Mode      string    `json:"mode"`      // server | client
-	Listen    string    `json:"listen"`    // server only: tunnel listen address
-	Server    string    `json:"server"`    // client only: iran_ip:tunnel_port
-	Transport string    `json:"transport"` // tcp | tls | ws | wss | tcpmux | wsmux | wssmux | udp
-	Token     string    `json:"token"`
-	SNI       string    `json:"sni"`     // TLS server name / certificate CN
-	Path      string    `json:"path"`    // HTTP path used by ws/wss/wsmux/wssmux
-	Pool      int       `json:"pool"`    // client only: idle tunnel connections kept warm (non-mux transports)
-	MuxCon    int       `json:"mux_con"` // client only: physical connections kept open (mux transports)
-	Forwards  []Forward `json:"forwards"`
-	Verbose   bool      `json:"verbose"`
+	Mode      string       `json:"mode"`      // server | client
+	Listen    string       `json:"listen"`    // server only: tunnel listen address
+	Server    string       `json:"server"`    // client only: iran_ip:tunnel_port
+	Transport string       `json:"transport"` // tcp | tls | ws | wss | tcpmux | wsmux | wssmux | udp
+	Token     string       `json:"token"`
+	SNI       string       `json:"sni"`     // TLS server name / certificate CN
+	Path      string       `json:"path"`    // HTTP path used by ws/wss/wsmux/wssmux
+	Pool      int          `json:"pool"`    // client only: idle tunnel connections kept warm (non-mux transports)
+	MuxCon    int          `json:"mux_con"` // client only: physical connections kept open (mux transports)
+	Forwards  []Forward    `json:"forwards"`
+	Verbose   bool         `json:"verbose"`
+	Panel     *PanelConfig `json:"panel,omitempty"`
 }
 
 func (c *Config) applyDefaults() {
@@ -96,6 +108,9 @@ func (c *Config) applyDefaults() {
 		if c.Forwards[i].Net == "" {
 			c.Forwards[i].Net = "tcp"
 		}
+	}
+	if c.Panel != nil && c.Panel.Listen == "" {
+		c.Panel.Listen = "0.0.0.0:9443"
 	}
 }
 
@@ -122,6 +137,11 @@ func (c *Config) validate() error {
 	}
 	if len(c.Token) < 8 {
 		return errors.New("token must be at least 8 characters")
+	}
+	if c.Panel != nil && c.Panel.Enabled {
+		if c.Panel.Username == "" || c.Panel.PasswordHash == "" {
+			return errors.New("panel.enabled needs a username and password_hash")
+		}
 	}
 	return nil
 }
@@ -1261,6 +1281,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	token := flag.Bool("gen-token", false, "print a fresh random token and exit")
 	check := flag.Bool("check", false, "validate the configuration and exit")
+	panelHash := flag.String("panel-hash", "", "print a bcrypt hash of this password for the web panel and exit")
 	flag.Parse()
 
 	if *showVersion {
@@ -1269,6 +1290,14 @@ func main() {
 	}
 	if *token {
 		fmt.Println(genToken())
+		return
+	}
+	if *panelHash != "" {
+		hash, err := hashPanelPassword(*panelHash)
+		if err != nil {
+			log.Fatalf("panel-hash: %v", err)
+		}
+		fmt.Println(hash)
 		return
 	}
 
@@ -1291,6 +1320,10 @@ func main() {
 		log.Println("shutting down")
 		os.Exit(0)
 	}()
+
+	if cfg.Panel != nil && cfg.Panel.Enabled {
+		go runPanel(cfg, *cfgPath)
+	}
 
 	if cfg.Mode == "server" {
 		s := &Server{cfg: cfg, pool: make(chan *dataConn, 512)}

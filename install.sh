@@ -218,13 +218,16 @@ install_binary() {
     warn "no release binary found, building from source"
     ensure_go
     mkdir -p "$SRC_DIR"
-    if [ -f ./main.go ] && [ -f ./mux.go ] && [ -f ./go.mod ] && [ -f ./go.sum ]; then
-      cp ./main.go ./mux.go ./go.mod ./go.sum "$SRC_DIR/"
+    if [ -f ./main.go ] && [ -f ./mux.go ] && [ -f ./panel.go ] && [ -f ./panel_ui.html ] \
+       && [ -f ./go.mod ] && [ -f ./go.sum ]; then
+      cp ./main.go ./mux.go ./panel.go ./panel_ui.html ./go.mod ./go.sum "$SRC_DIR/"
     else
-      curl -fsSL "$RAW/main.go" -o "$SRC_DIR/main.go" || die "could not download main.go"
-      curl -fsSL "$RAW/mux.go"  -o "$SRC_DIR/mux.go"  || die "could not download mux.go"
-      curl -fsSL "$RAW/go.mod"  -o "$SRC_DIR/go.mod"  || die "could not download go.mod"
-      curl -fsSL "$RAW/go.sum"  -o "$SRC_DIR/go.sum"  || die "could not download go.sum"
+      curl -fsSL "$RAW/main.go"       -o "$SRC_DIR/main.go"       || die "could not download main.go"
+      curl -fsSL "$RAW/mux.go"        -o "$SRC_DIR/mux.go"        || die "could not download mux.go"
+      curl -fsSL "$RAW/panel.go"      -o "$SRC_DIR/panel.go"      || die "could not download panel.go"
+      curl -fsSL "$RAW/panel_ui.html" -o "$SRC_DIR/panel_ui.html" || die "could not download panel_ui.html"
+      curl -fsSL "$RAW/go.mod"        -o "$SRC_DIR/go.mod"        || die "could not download go.mod"
+      curl -fsSL "$RAW/go.sum"        -o "$SRC_DIR/go.sum"        || die "could not download go.sum"
     fi
     ( cd "$SRC_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" . ) || die "build failed"
     chmod 0755 "$BIN"
@@ -837,6 +840,59 @@ performance() {
   esac
 }
 
+# setup_panel enables/reconfigures/disables the built-in HTTPS web admin
+# panel (bilingual EN/FA UI, served by the tifusi binary itself). Exposed
+# directly on the internet, protected by a username + bcrypt password hash
+# (generated via "tifusi -panel-hash") - this is why it needs its own
+# explicit opt-in rather than being on by default.
+setup_panel() {
+  step "Web panel" "browser-based admin UI over HTTPS"
+  [ -f "$CFG" ] || { warn "no configuration yet - set up this server first"; return; }
+
+  local ip; ip=$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo YOUR_SERVER_IP)
+  local current; current=$(jq -r '.panel.enabled // false' "$CFG")
+  if [ "$current" = "true" ]; then
+    local listen user; listen=$(jq -r '.panel.listen' "$CFG"); user=$(jq -r '.panel.username' "$CFG")
+    echo "   ${D}currently enabled:${N} ${W}https://$ip:${listen##*:}/${N}  ${D}(user: $user)${N}"
+    echo
+    echo "   ${R}1${N}) ${W}Change username / password${N}"
+    echo "   ${R}2${N}) ${W}Disable${N}"
+    echo "   ${R}0${N}) ${W}Back${N}"
+    local c; read -r -p "  ${W}choice:${N} " c
+    case "$c" in
+      1) : ;; # fall through to (re)configure below
+      2) local tmp; tmp=$(jq '.panel.enabled=false' "$CFG"); echo "$tmp" | jq . > "$CFG"
+         ok "panel disabled"; restart_service; return ;;
+      *) return ;;
+    esac
+  else
+    read -r -p "  ${W}Enable the web panel?${N} [y/N]: " a
+    [[ "$a" =~ ^[Yy]$ ]] || return
+  fi
+
+  local user pass port hash tmp
+  user=$(ask_required "Panel username")
+  while true; do
+    read -r -s -p "  ${W}Panel password${N} (min 8 chars): " pass; echo
+    [ "${#pass}" -ge 8 ] && break
+    warn "must be at least 8 characters"
+  done
+  port=$(ask "Panel port" 9443)
+  hash=$("$BIN" -panel-hash "$pass") || { warn "could not hash the password"; return; }
+
+  tmp=$(jq --arg u "$user" --arg h "$hash" --arg l "0.0.0.0:$port" \
+        '.panel = {enabled:true, listen:$l, username:$u, password_hash:$h}' "$CFG")
+  echo "$tmp" | jq . > "$CFG"
+  open_port "$port" tcp
+  restart_service
+
+  echo
+  ok "panel enabled"
+  echo "   ${W}URL${N} : ${W}${BD}https://$ip:$port/${N}"
+  echo "   ${D}The certificate is self-signed, same as the tls transport - your${N}"
+  echo "   ${D}browser will warn once; accept it to continue.${N}"
+}
+
 uninstall() {
   step "Uninstall Tifusi Tunnel"
   read -r -p "  ${W}Remove Tifusi Tunnel completely?${N} [y/N]: " a
@@ -860,7 +916,8 @@ manage() {
     echo "   ${R}4${N}) ${W}Restart service${N}"
     echo "   ${R}5${N}) ${W}Watchdog / cron${N}"
     echo "   ${R}6${N}) ${W}WireGuard bridge${N}  ${D}(fixes L2TP/IPsec)${N}"
-    echo "   ${R}7${N}) ${W}Uninstall${N}"
+    echo "   ${R}7${N}) ${W}Web panel${N}         ${D}(browser admin UI)${N}"
+    echo "   ${R}8${N}) ${W}Uninstall${N}"
     echo "   ${R}0${N}) ${W}Back${N}"
     echo
     local c; read -r -p "  ${W}choice:${N} " c
@@ -871,7 +928,8 @@ manage() {
       4) step "Restart service"; restart_service; pause ;;
       5) watchdog ;;
       6) setup_wg_bridge; wg_status; pause ;;
-      7) uninstall; pause ;;
+      7) setup_panel; pause ;;
+      8) uninstall; pause ;;
       0) break ;;
       *) warn "invalid choice"; sleep 1 ;;
     esac
