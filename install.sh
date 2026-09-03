@@ -36,46 +36,32 @@ cols() { local c; c=$(tput cols 2>/dev/null || echo 80); [ -n "$c" ] && echo "$c
 # rule N repeats a single character N times without depending on seq.
 rule() { local n="$1" ch="$2" out; printf -v out '%*s' "$n" ''; echo "${out// /$ch}"; }
 
-# boxline prints one row of the header box: "  ║<centered text, colored>║"
-# text must be plain (no ANSI codes) so its length can be measured for
-# centering; color is applied only when printing.
-boxline() {
-  local bw="$1" text="$2" color="${3:-$W}"
-  local tlen=${#text} left right
-  left=$(( (bw - tlen) / 2 )); [ "$left" -lt 0 ] && left=0
-  right=$(( bw - tlen - left )); [ "$right" -lt 0 ] && right=0
-  printf '  %s║%s' "${BL}${BD}" "$N"
-  printf '%*s' "$left" ''
-  printf '%s%s%s' "${color}${BD}" "$text" "$N"
-  printf '%*s' "$right" ''
-  printf '%s║%s\n' "${BL}${BD}" "$N"
-}
-
 banner() {
   clear 2>/dev/null || true
-  local w bw hb
-  w=$(cols)
-  bw=48
-  [ "$w" -lt $((bw + 4)) ] && bw=$((w - 4))
-  [ "$bw" -lt 24 ] && bw=24
-  hb=$(rule "$bw" "═")
-
+  local w; w=$(cols)
   echo
-  printf '  %s╔%s╗%s\n' "${BL}${BD}" "$hb" "$N"
-  boxline "$bw" ""
-  printf '  %s║%s' "${BL}${BD}" "$N"
-  local title="Tifusi" title2=" Tunnel"
-  local tlen=$((${#title} + ${#title2}))
-  local left=$(( (bw - tlen) / 2 )); [ "$left" -lt 0 ] && left=0
-  local right=$(( bw - tlen - left )); [ "$right" -lt 0 ] && right=0
-  printf '%*s' "$left" ''
-  printf '%s%s%s' "${C}${BD}" "$title" "$N"
-  printf '%s%s%s' "${R}${BD}" "$title2" "$N"
-  printf '%*s' "$right" ''
-  printf '%s║%s\n' "${BL}${BD}" "$N"
-  boxline "$bw" "reverse tunnel · client-initiated" "$D"
-  boxline "$bw" ""
-  printf '  %s╚%s╝%s\n' "${BL}${BD}" "$hb" "$N"
+  if [ "$w" -ge 40 ]; then
+    printf '%s%s' "$C" "$BD"
+    cat <<'EOF'
+ _____ ___ _____ _   _ ____ ___
+|_   _|_ _|  ___| | | / ___|_ _|
+  | |  | || |_  | | | \___ \| |
+  | |  | ||  _| | |_| |___) | |
+  |_| |___|_|    \___/|____/___|
+EOF
+    printf '%s%s' "$R" "$BD"
+    cat <<'EOF'
+ _____ _   _ _   _ _   _ _____ _
+|_   _| | | | \ | | \ | | ____| |
+  | | | | | |  \| |  \| |  _| | |
+  | | | |_| | |\  | |\  | |___| |___
+  |_|  \___/|_| \_|_| \_|_____|_____|
+EOF
+    printf '%s' "$N"
+  else
+    printf '  %s%sTIFUSI TUNNEL%s\n' "$C" "$BD" "$N"
+  fi
+  echo "  ${D}reverse tunnel · client-initiated${N}"
   echo
 }
 
