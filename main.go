@@ -1260,7 +1260,26 @@ func (c *Client) handleTCP(f *fconn, req dialReq) {
 }
 
 func (c *Client) handleUDP(f *fconn, req dialReq) {
-	target, err := net.DialTimeout("udp", req.Target, 10*time.Second)
+	d := &net.Dialer{Timeout: 10 * time.Second}
+	// For a loopback target (the common case: forwarding to a service
+	// running on this same box), let the OS pick the source address as
+	// usual UNLESS it would end up identical to the destination - the
+	// kernel then treats the flow as fully self-addressed, which breaks
+	// delivery of return traffic for kernel-processed protocols like
+	// IPsec/XFRM (e.g. an L2TP/IPsec server bound to 127.0.0.1: replies
+	// generated after ESP decryption never make it back out). Binding to
+	// a different loopback address than the target avoids that ambiguity
+	// without touching real, non-loopback forwards.
+	if host, _, err := net.SplitHostPort(req.Target); err == nil {
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			local := "127.0.0.1"
+			if ip.String() == local {
+				local = "127.0.0.2"
+			}
+			d.LocalAddr = &net.UDPAddr{IP: net.ParseIP(local)}
+		}
+	}
+	target, err := d.Dial("udp", req.Target)
 	if err != nil {
 		f.send(frmDialErr, []byte(err.Error()))
 		return
