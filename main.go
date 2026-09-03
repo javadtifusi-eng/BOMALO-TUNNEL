@@ -486,14 +486,45 @@ func (w *wsConn) readMessage() ([]byte, error) {
 
 // ---------------------------------------------------------------- helpers
 
+// closeWriter is implemented by connections that support a TCP-style half
+// close (*net.TCPConn, *tls.Conn); ws/mux connections don't, and joinStreams
+// falls back to waiting for both directions instead of closing early.
+type closeWriter interface {
+	CloseWrite() error
+}
+
+// joinStreams pipes a<-brd and b<-ar concurrently. Each direction signals
+// EOF to its own destination as soon as its source is done (a proper TCP
+// half close on connections that support it, e.g. plain tcp/tls - a client
+// that half-closes after sending its request still sees the full response,
+// instead of having it cut off the instant its own side goes quiet). The
+// ws/mux transports have no equivalent mid-session half-close signal, so
+// once one direction finishes the other gets a bounded grace period to
+// finish naturally before both sides are closed - long enough for a normal
+// reply, short enough not to leak a session forever on one that never will.
 func joinStreams(a net.Conn, ar io.Reader, b net.Conn, brd io.Reader) {
 	done := make(chan struct{}, 2)
-	go func() { io.Copy(a, brd); done <- struct{}{} }()
-	go func() { io.Copy(b, ar); done <- struct{}{} }()
+	go func() {
+		io.Copy(a, brd)
+		if cw, ok := a.(closeWriter); ok {
+			cw.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		io.Copy(b, ar)
+		if cw, ok := b.(closeWriter); ok {
+			cw.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
 	<-done
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+	}
 	a.Close()
 	b.Close()
-	<-done
 }
 
 func genToken() string {
