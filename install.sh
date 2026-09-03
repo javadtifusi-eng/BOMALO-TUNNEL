@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bomalo Tunnel installer / manager
+# Tifusi Tunnel installer / manager
 #   bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/Tifusi-Tunnel/main/install.sh)
 set -uo pipefail
 
@@ -9,13 +9,13 @@ BRANCH="main"
 RAW="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/${BRANCH}"
 RELEASE="https://github.com/${REPO_USER}/${REPO_NAME}/releases/latest/download"
 
-BIN=/usr/local/bin/bomalo
-MENU=/usr/local/bin/bomalo-menu
-CFG_DIR=/etc/bomalo
+BIN=/usr/local/bin/tifusi
+MENU=/usr/local/bin/tifusi-menu
+CFG_DIR=/etc/tifusi
 CFG=$CFG_DIR/config.json
-UNIT=/etc/systemd/system/bomalo.service
-CRON=/etc/cron.d/bomalo
-SRC_DIR=/opt/bomalo-src
+UNIT=/etc/systemd/system/tifusi.service
+CRON=/etc/cron.d/tifusi
+SRC_DIR=/opt/tifusi-src
 GO_MIN=1.21
 
 # palette: text is white, numbers are red, only "running" is green
@@ -59,7 +59,7 @@ banner() {
   printf '  %s╔%s╗%s\n' "${BL}${BD}" "$hb" "$N"
   boxline "$bw" ""
   printf '  %s║%s' "${BL}${BD}" "$N"
-  local title="Bomalo" title2=" Tunnel" tlen=$((${#title} + ${#title2}))
+  local title="Tifusi" title2=" Tunnel" tlen=$((${#title} + ${#title2}))
   local left=$(( (bw - tlen) / 2 )); [ "$left" -lt 0 ] && left=0
   local right=$(( bw - tlen - left )); [ "$right" -lt 0 ] && right=0
   printf '%*s' "$left" ''
@@ -160,16 +160,16 @@ ensure_go() {
 bin_version() {
   [ -x "$BIN" ] || return 1
   local v; v=$("$BIN" -version 2>/dev/null | head -1)
-  case "$v" in bomalo\ *) echo "$v" ;; *) return 1 ;; esac
+  case "$v" in tifusi\ *) echo "$v" ;; *) return 1 ;; esac
 }
 
 stop_legacy() {
   bin_version >/dev/null 2>&1 && return
   [ -x "$BIN" ] || return
-  warn "an older bomalo (the iptables/bash version) is installed at $BIN"
+  warn "an older version (the iptables/bash version) is installed at $BIN"
   local units u
   units=$(systemctl list-units --all --plain --no-legend 2>/dev/null \
-          | awk '{print $1}' | grep -E '^(bomalo|tunnel)' | grep -v '^bomalo.service$')
+          | awk '{print $1}' | grep -E '^(bomalo|tifusi|tunnel)' | grep -v '^tifusi.service$')
   if [ -n "$units" ]; then
     for u in $units; do systemctl disable --now "$u" >/dev/null 2>&1; done
     echo "   ${D}stopped legacy services${N}"
@@ -197,17 +197,18 @@ install_binary() {
   stop_legacy
   local a; a=$(arch_tag)
   info "looking for a prebuilt binary"
-  if curl -fsSL "${RELEASE}/bomalo-linux-${a}" -o /tmp/bomalo 2>/dev/null && [ -s /tmp/bomalo ]; then
-    install -m 0755 /tmp/bomalo "$BIN"; rm -f /tmp/bomalo
+  if curl -fsSL "${RELEASE}/tifusi-linux-${a}" -o /tmp/tifusi 2>/dev/null && [ -s /tmp/tifusi ]; then
+    install -m 0755 /tmp/tifusi "$BIN"; rm -f /tmp/tifusi
     ok "installed $(bin_version)"
   else
     warn "no release binary found, building from source"
     ensure_go
     mkdir -p "$SRC_DIR"
-    if [ -f ./main.go ] && [ -f ./go.mod ]; then
-      cp ./main.go ./go.mod "$SRC_DIR/"
+    if [ -f ./main.go ] && [ -f ./mux.go ] && [ -f ./go.mod ]; then
+      cp ./main.go ./mux.go ./go.mod "$SRC_DIR/"
     else
       curl -fsSL "$RAW/main.go" -o "$SRC_DIR/main.go" || die "could not download main.go"
+      curl -fsSL "$RAW/mux.go"  -o "$SRC_DIR/mux.go"  || die "could not download mux.go"
       curl -fsSL "$RAW/go.mod"  -o "$SRC_DIR/go.mod"  || die "could not download go.mod"
     fi
     ( cd "$SRC_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" . ) || die "build failed"
@@ -222,7 +223,7 @@ install_binary() {
 write_unit() {
   cat > "$UNIT" <<EOF
 [Unit]
-Description=Bomalo Tunnel
+Description=Tifusi Tunnel
 After=network-online.target
 Wants=network-online.target
 
@@ -248,10 +249,10 @@ save_cfg() {
 
 restart_service() {
   write_unit
-  systemctl enable bomalo >/dev/null 2>&1
-  systemctl restart bomalo
+  systemctl enable tifusi >/dev/null 2>&1
+  systemctl restart tifusi
   sleep 1
-  if systemctl is-active --quiet bomalo; then ok "service is running"
+  if systemctl is-active --quiet tifusi; then ok "service is running"
   else warn "service failed - check the logs in Manage"; fi
 }
 
@@ -479,7 +480,7 @@ edit_settings() {
 
 show_status() {
   echo
-  systemctl status bomalo --no-pager -l 2>/dev/null | head -12
+  systemctl status tifusi --no-pager -l 2>/dev/null | head -12
   echo
   if [ -f "$CFG" ]; then
     echo "  mode      : ${W}$(jq -r .mode "$CFG")${N}"
@@ -493,10 +494,10 @@ show_status() {
 
 write_cron() {
   {
-    echo "# Bomalo Tunnel watchdog"
+    echo "# Tifusi Tunnel watchdog"
     echo "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
-    echo "*/5 * * * * root systemctl is-active --quiet bomalo || systemctl restart bomalo"
-    [ "$1" = 1 ] && echo "0 4 * * * root systemctl restart bomalo"
+    echo "*/5 * * * * root systemctl is-active --quiet tifusi || systemctl restart tifusi"
+    [ "$1" = 1 ] && echo "0 4 * * * root systemctl restart tifusi"
   } > "$CRON"
   chmod 0644 "$CRON"
   systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || true
@@ -577,7 +578,7 @@ setup_wg_bridge() {
       # same rationale in the standalone version of this bridge).
       postup="PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -t nat -A PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -A POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j SNAT --to-source 10.200.0.1; iptables -A FORWARD -o %i -j ACCEPT; iptables -A FORWARD -i %i -j ACCEPT"
       postdown="PostDown = iptables -t nat -D PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -D POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j SNAT --to-source 10.200.0.1; iptables -D FORWARD -o %i -j ACCEPT; iptables -D FORWARD -i %i -j ACCEPT"
-      # this now conflicts with Bomalo's own relay for the same ports - drop those forwards
+      # this now conflicts with Tifusi's own relay for the same ports - drop those forwards
       if [ -f "$CFG" ] && [ "$(jq -r .mode "$CFG" 2>/dev/null)" = "server" ]; then
         local tmp; tmp=$(jq '.forwards |= map(select(.listen != "0.0.0.0:500" and .listen != "0.0.0.0:4500"))' "$CFG")
         echo "$tmp" | jq . > "$CFG"
@@ -657,14 +658,14 @@ apply_perf_preset() {
     3) rmem=33554432; wmem=33554432 ;;   # Aggressive - max headroom, more RAM
     *) warn "invalid preset"; return ;;
   esac
-  sed -i '/# Bomalo Tunnel performance preset/,/# end Bomalo Tunnel preset/d' /etc/sysctl.conf
+  sed -i '/# Tifusi Tunnel performance preset/,/# end Tifusi Tunnel preset/d' /etc/sysctl.conf
   {
-    echo "# Bomalo Tunnel performance preset"
+    echo "# Tifusi Tunnel performance preset"
     echo "net.core.default_qdisc=fq"
     echo "net.ipv4.tcp_congestion_control=bbr"
     echo "net.core.rmem_max=$rmem"
     echo "net.core.wmem_max=$wmem"
-    echo "# end Bomalo Tunnel preset"
+    echo "# end Tifusi Tunnel preset"
   } >> /etc/sysctl.conf
   sysctl -p >/dev/null 2>&1
   ok "applied - tcp_congestion_control is now $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
@@ -686,9 +687,9 @@ performance() {
 }
 
 uninstall() {
-  read -r -p "  ${W}Remove Bomalo Tunnel completely?${N} [y/N]: " a
+  read -r -p "  ${W}Remove Tifusi Tunnel completely?${N} [y/N]: " a
   [[ "$a" =~ ^[Yy]$ ]] || return
-  systemctl disable --now bomalo >/dev/null 2>&1
+  systemctl disable --now tifusi >/dev/null 2>&1
   systemctl disable --now "wg-quick@${WG_IF}" >/dev/null 2>&1
   rm -f "$UNIT" "$BIN" "$CRON" "$MENU" /usr/local/bin/bm "$WG_CFG"
   rm -rf "$CFG_DIR" "$SRC_DIR"
@@ -714,7 +715,7 @@ manage() {
     case "$c" in
       1) edit_settings; pause ;;
       2) show_status; pause ;;
-      3) journalctl -u bomalo -f -n 50 ;;
+      3) journalctl -u tifusi -f -n 50 ;;
       4) restart_service; pause ;;
       5) watchdog ;;
       6) setup_wg_bridge; wg_status; pause ;;
@@ -732,7 +733,7 @@ menu() {
     banner
     local ver st mode
     ver=$(bin_version 2>/dev/null) || ver="not installed"
-    if systemctl is-active --quiet bomalo 2>/dev/null; then st="${G}running${N}"
+    if systemctl is-active --quiet tifusi 2>/dev/null; then st="${G}running${N}"
     elif [ -f "$CFG" ]; then st="${W}stopped${N}"
     else st="${W}not configured${N}"; fi
     mode=""

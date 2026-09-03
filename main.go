@@ -1,4 +1,4 @@
-// Bomalo Tunnel - reverse tunnel engine
+// Tifusi Tunnel - reverse tunnel engine
 //
 // Topology:
 //
@@ -45,11 +45,10 @@ import (
 const version = "1.0.0"
 
 const banner = `
-  ____                        _         _____                       _
- | __ )  ___  _ __ ___   __ _| | ___   |_   _|   _ _ __  _ __   ___| |
- |  _ \ / _ \| '_ ' _ \ / _' | |/ _ \    | || | | | '_ \| '_ \ / _ \ |
- | |_) | (_) | | | | | | (_| | | (_) |   | || |_| | | | | | | |  __/ |
- |____/ \___/|_| |_| |_|\__,_|_|\___/    |_| \__,_|_| |_|_| |_|\___|_|
+ _____ ___ ___ _   _ ___ ___   _____ _   _ _  _ _  _ ___ _
+|_   _|_ _| __| | | / __|_ _| |_   _| | | | \| | \| | __| |
+  | |  | || _|| |_| \__ \| |    | | | |_| | .` + "`" + ` | .` + "`" + ` | _|| |__
+  |_| |___|_|  \___/|___/___|   |_|  \___/|_|\_|_|\_|___|____|
 `
 
 // ---------------------------------------------------------------- config
@@ -1172,14 +1171,14 @@ loop:
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime)
 
-	cfgPath := flag.String("config", "/etc/bomalo/config.json", "path to the configuration file")
+	cfgPath := flag.String("config", "/etc/tifusi/config.json", "path to the configuration file")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	token := flag.Bool("gen-token", false, "print a fresh random token and exit")
 	check := flag.Bool("check", false, "validate the configuration and exit")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("bomalo %s\n", version)
+		fmt.Printf("tifusi %s\n", version)
 		return
 	}
 	if *token {
@@ -1197,7 +1196,7 @@ func main() {
 	}
 
 	fmt.Print(banner)
-	fmt.Printf("  Bomalo Tunnel %s  |  mode: %s  |  transport: %s\n\n", version, cfg.Mode, cfg.Transport)
+	fmt.Printf("  Tifusi Tunnel %s  |  mode: %s  |  transport: %s\n\n", version, cfg.Mode, cfg.Transport)
 
 	go func() {
 		sig := make(chan os.Signal, 1)

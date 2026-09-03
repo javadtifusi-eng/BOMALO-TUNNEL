@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="assets/logo.jpg" alt="Bomalo" width="190">
+  <img src="assets/logo-tifusi-icon.svg" alt="Tifusi Tunnel" width="190">
 </p>
 
 <p align="center">
-  <img src="banner.svg" alt="Bomalo Tunnel" width="100%">
+  <img src="banner.svg" alt="Tifusi Tunnel" width="100%">
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="#english">🇬🇧 English</a> &nbsp;/&nbsp; <a href="#فارسی"><img src="assets/flag-ir.png" width="16" height="16"> فارسی</a> &nbsp;/&nbsp; <a href="#русский">🇷🇺 Русский</a>
+  <a href="#english">🇬🇧 English</a> &nbsp;/&nbsp; <a href="#persian"><img src="assets/flag-ir.png" width="22" height="22"> فارسی</a> &nbsp;/&nbsp; <a href="#russian">🇷🇺 Русский</a>
 </p>
 
 <a name="english"></a>
@@ -105,7 +105,7 @@ blocking on each physical connection when it is very busy — raise
 
 ## Configuration
 
-`/etc/bomalo/config.json` on the Iran server:
+`/etc/tifusi/config.json` on the Iran server:
 
 ```json
 {
@@ -149,28 +149,28 @@ multiplexed sessions.
 
 ```bash
 bm                                       # open the management menu
-bomalo -config /etc/bomalo/config.json   # run in the foreground
-bomalo -check                            # validate the config
-bomalo -gen-token                        # print a new token
-systemctl restart bomalo
-journalctl -u bomalo -f
+tifusi -config /etc/tifusi/config.json   # run in the foreground
+tifusi -check                            # validate the config
+tifusi -gen-token                        # print a new token
+systemctl restart tifusi
+journalctl -u tifusi -f
 ```
 
 ## Building manually
 
 ```bash
 git clone https://github.com/javadtifusi-eng/Tifusi-Tunnel && cd Tifusi-Tunnel
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bomalo .
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o tifusi .
 ```
 
 Standard library only — no third-party modules.
 
 ---
 
-<a name="فارسی"></a>
+<a name="persian"></a>
 <div dir="rtl">
 
-# بومالو تانل
+# Tifusi Tunnel
 
 [⬆ English](#english)
 
@@ -316,18 +316,18 @@ ping 10.200.0.1
 ## دستورها
 
 ```bash
-bomalo -check        # بررسی صحت کانفیگ
-bomalo -gen-token    # ساخت توکن جدید
-systemctl restart bomalo
-journalctl -u bomalo -f
+tifusi -check        # بررسی صحت کانفیگ
+tifusi -gen-token    # ساخت توکن جدید
+systemctl restart tifusi
+journalctl -u tifusi -f
 ```
 
 </div>
 
 ---
 
-<a name="русский"></a>
-# Bomalo Tunnel
+<a name="russian"></a>
+# Tifusi Tunnel
 
 [⬆ English](#english)
 
@@ -401,8 +401,8 @@ UDP 4500. Чистый ESP (IP-протокол 50) *не* передаётся 
 ## Команды
 
 ```bash
-bomalo -check        # проверить конфиг
-bomalo -gen-token    # сгенерировать новый токен
-systemctl restart bomalo
-journalctl -u bomalo -f
+tifusi -check        # проверить конфиг
+tifusi -gen-token    # сгенерировать новый токен
+systemctl restart tifusi
+journalctl -u tifusi -f
 ```
