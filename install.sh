@@ -312,11 +312,17 @@ pick_transport() {
   {
     echo
     echo "  ${W}${BD}Transport family:${N}"
-    echo "    ${R}1${N}) ${W}tcp${N}   raw, fastest, no disguise"
-    echo "    ${R}2${N}) ${W}tls${N}   TLS with a self-signed certificate"
-    echo "    ${R}3${N}) ${W}ws${N}    HTTP/WebSocket upgrade"
-    echo "    ${R}4${N}) ${W}wss${N}   WebSocket inside TLS  ${D}(best against DPI)${N}"
-    echo "    ${R}5${N}) ${W}udp${N}   raw UDP (KCP)  ${D}fast, no disguise, good on lossy links${N}"
+    echo "    ${R}1${N}) ${W}tcp${N}"
+    echo "    ${R}2${N}) ${W}tls${N}"
+    echo "    ${R}3${N}) ${W}ws${N}"
+    echo "    ${R}4${N}) ${W}wss${N}"
+    echo "    ${R}5${N}) ${W}udp${N}"
+    echo
+    echo "    ${D}tcp   raw, fastest, no disguise${N}"
+    echo "    ${D}tls   TLS with a self-signed certificate${N}"
+    echo "    ${D}ws    HTTP/WebSocket upgrade${N}"
+    echo "    ${D}wss   WebSocket inside TLS - best against DPI${N}"
+    echo "    ${D}udp   raw UDP (KCP) - fast, no disguise, good on lossy links${N}"
   } >&2
   local c; read -r -p "  ${W}choice${N} [1]: " c
   case "${c:-1}" in
@@ -330,8 +336,11 @@ pick_transport() {
   {
     echo
     echo "  ${W}${BD}$fam variant:${N}"
-    echo "    ${R}1${N}) ${W}$fam${N}      plain"
-    echo "    ${R}2${N}) ${W}${fam}mux${N}   multiplexed  ${D}(fewer sockets under many sessions)${N}"
+    echo "    ${R}1${N}) ${W}$fam${N}"
+    echo "    ${R}2${N}) ${W}${fam}mux${N}"
+    echo
+    echo "    ${D}$fam      plain${N}"
+    echo "    ${D}${fam}mux   multiplexed - fewer sockets under many sessions${N}"
   } >&2
   local v; read -r -p "  ${W}choice${N} [1]: " v
   case "$v" in
