@@ -205,12 +205,13 @@ install_binary() {
     warn "no release binary found, building from source"
     ensure_go
     mkdir -p "$SRC_DIR"
-    if [ -f ./main.go ] && [ -f ./mux.go ] && [ -f ./go.mod ]; then
-      cp ./main.go ./mux.go ./go.mod "$SRC_DIR/"
+    if [ -f ./main.go ] && [ -f ./mux.go ] && [ -f ./go.mod ] && [ -f ./go.sum ]; then
+      cp ./main.go ./mux.go ./go.mod ./go.sum "$SRC_DIR/"
     else
       curl -fsSL "$RAW/main.go" -o "$SRC_DIR/main.go" || die "could not download main.go"
       curl -fsSL "$RAW/mux.go"  -o "$SRC_DIR/mux.go"  || die "could not download mux.go"
       curl -fsSL "$RAW/go.mod"  -o "$SRC_DIR/go.mod"  || die "could not download go.mod"
+      curl -fsSL "$RAW/go.sum"  -o "$SRC_DIR/go.sum"  || die "could not download go.sum"
     fi
     ( cd "$SRC_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" . ) || die "build failed"
     chmod 0755 "$BIN"
