@@ -602,6 +602,21 @@ func genToken() string {
 	return hex.EncodeToString(b[:])
 }
 
+// isLocalIP reports whether ip belongs to one of this machine's own
+// network interfaces (as opposed to a genuinely remote host).
+func isLocalIP(ip net.IP) bool {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && ipn.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func hostOf(addr string) string {
 	h, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -1261,17 +1276,19 @@ func (c *Client) handleTCP(f *fconn, req dialReq) {
 
 func (c *Client) handleUDP(f *fconn, req dialReq) {
 	d := &net.Dialer{Timeout: 10 * time.Second}
-	// For a loopback target (the common case: forwarding to a service
-	// running on this same box), let the OS pick the source address as
+	// For a target that is this same box (the common case: forwarding to
+	// a service running locally), let the OS pick the source address as
 	// usual UNLESS it would end up identical to the destination - the
 	// kernel then treats the flow as fully self-addressed, which breaks
 	// delivery of return traffic for kernel-processed protocols like
-	// IPsec/XFRM (e.g. an L2TP/IPsec server bound to 127.0.0.1: replies
+	// IPsec/XFRM (e.g. an L2TP/IPsec server bound locally: replies
 	// generated after ESP decryption never make it back out). Binding to
-	// a different loopback address than the target avoids that ambiguity
-	// without touching real, non-loopback forwards.
+	// 127.0.0.1 as source (or 127.0.0.2 if the target itself is
+	// 127.0.0.1) avoids that ambiguity, whether the target is a loopback
+	// address or one of this machine's own real interface addresses -
+	// without touching genuinely remote forwards.
 	if host, _, err := net.SplitHostPort(req.Target); err == nil {
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || isLocalIP(ip)) {
 			local := "127.0.0.1"
 			if ip.String() == local {
 				local = "127.0.0.2"
