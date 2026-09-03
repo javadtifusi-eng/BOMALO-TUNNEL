@@ -59,7 +59,8 @@ banner() {
   printf '  %s╔%s╗%s\n' "${BL}${BD}" "$hb" "$N"
   boxline "$bw" ""
   printf '  %s║%s' "${BL}${BD}" "$N"
-  local title="Tifusi" title2=" Tunnel" tlen=$((${#title} + ${#title2}))
+  local title="Tifusi" title2=" Tunnel"
+  local tlen=$((${#title} + ${#title2}))
   local left=$(( (bw - tlen) / 2 )); [ "$left" -lt 0 ] && left=0
   local right=$(( bw - tlen - left )); [ "$right" -lt 0 ] && right=0
   printf '%*s' "$left" ''
