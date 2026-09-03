@@ -626,13 +626,27 @@ func isLocalIP(ip net.IP) bool {
 // to a second loopback address keeps this working on boxes with only
 // 127.0.0.1 configured.
 func distinctLocalAddr(target net.IP) net.IP {
-	if addrs, err := net.InterfaceAddrs(); err == nil {
-		for _, a := range addrs {
-			ipn, ok := a.(*net.IPNet)
-			if !ok || ipn.IP.To4() == nil || ipn.IP.IsLoopback() || ipn.IP.Equal(target) {
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, ifi := range ifaces {
+			// Point-to-point interfaces (tun/wg/ppp/veth...) route their
+			// own address as both source and destination for a lot of
+			// traffic and are exactly the kind of ambiguity this is
+			// trying to avoid - stick to broadcast-capable interfaces
+			// (a real NIC, or a dummy interface set up for this purpose).
+			if ifi.Flags&net.FlagBroadcast == 0 || ifi.Flags&net.FlagUp == 0 {
 				continue
 			}
-			return ipn.IP
+			addrs, err := ifi.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				ipn, ok := a.(*net.IPNet)
+				if !ok || ipn.IP.To4() == nil || ipn.IP.IsLoopback() || ipn.IP.Equal(target) {
+					continue
+				}
+				return ipn.IP
+			}
 		}
 	}
 	if target.Equal(net.ParseIP("127.0.0.1")) {
