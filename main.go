@@ -48,12 +48,44 @@ import (
 
 const version = "1.0.0"
 
-const banner = `
- _____ ___ ___ _   _ ___ ___   _____ _   _ _  _ _  _ ___ _
-|_   _|_ _| __| | | / __|_ _| |_   _| | | | \| | \| | __| |
-  | |  | || _|| |_| \__ \| |    | | | |_| | .` + "`" + ` | .` + "`" + ` | _|| |__
-  |_| |___|_|  \___/|___/___|   |_|  \___/|_|\_|_|\_|___|____|
-`
+const (
+	ansiReset = "\033[0m"
+	ansiBold  = "\033[1m"
+	ansiCyan  = "\033[96m"
+	ansiDim   = "\033[90m"
+	ansiBlue  = "\033[94m"
+)
+
+// printBanner draws a small boxed header for interactive/log output -
+// width is computed so centering always lines up, unlike a hand-drawn
+// ASCII art block that has to be re-measured by hand every time the
+// text changes.
+func printBanner(ver, mode, transport string) {
+	const bw = 50
+	frame := ansiBlue + ansiBold
+	rule := strings.Repeat("═", bw)
+	line := func(text, color string) {
+		pad := bw - len([]rune(text))
+		if pad < 0 {
+			pad = 0
+		}
+		left := pad / 2
+		fmt.Printf("  %s║%s%s%s%s%s%s║%s\n",
+			frame, ansiReset,
+			strings.Repeat(" ", left), color+ansiBold, text, ansiReset,
+			strings.Repeat(" ", pad-left), frame+ansiReset)
+	}
+	fmt.Println()
+	fmt.Printf("  %s╔%s╗%s\n", frame, rule, ansiReset)
+	line("", "")
+	line("TIFUSI TUNNEL", ansiCyan)
+	line("reverse tunnel · client-initiated", ansiDim)
+	line("", "")
+	fmt.Printf("  %s╚%s╝%s\n", frame, rule, ansiReset)
+	fmt.Println()
+	fmt.Printf("  %s%s%s  mode: %s%s%s  transport: %s%s%s\n\n",
+		ansiBold, ver, ansiReset, ansiCyan, mode, ansiReset, ansiCyan, transport, ansiReset)
+}
 
 // ---------------------------------------------------------------- config
 
@@ -600,6 +632,59 @@ func genToken() string {
 	var b [16]byte
 	rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// isLocalIP reports whether ip belongs to one of this machine's own
+// network interfaces (as opposed to a genuinely remote host).
+func isLocalIP(ip net.IP) bool {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && ipn.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// distinctLocalAddr picks a source address different from target for a
+// self-dial (see handleUDP). A real, non-loopback interface address is
+// preferred when one is available - some kernel-processed protocols
+// (IPsec/XFRM in particular) can fail to deliver return traffic that was
+// generated and re-encrypted entirely on the loopback interface, even
+// once source and destination addresses no longer collide. Falling back
+// to a second loopback address keeps this working on boxes with only
+// 127.0.0.1 configured.
+func distinctLocalAddr(target net.IP) net.IP {
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, ifi := range ifaces {
+			// Point-to-point interfaces (tun/wg/ppp/veth...) route their
+			// own address as both source and destination for a lot of
+			// traffic and are exactly the kind of ambiguity this is
+			// trying to avoid - stick to broadcast-capable interfaces
+			// (a real NIC, or a dummy interface set up for this purpose).
+			if ifi.Flags&net.FlagBroadcast == 0 || ifi.Flags&net.FlagUp == 0 {
+				continue
+			}
+			addrs, err := ifi.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				ipn, ok := a.(*net.IPNet)
+				if !ok || ipn.IP.To4() == nil || ipn.IP.IsLoopback() || ipn.IP.Equal(target) {
+					continue
+				}
+				return ipn.IP
+			}
+		}
+	}
+	if target.Equal(net.ParseIP("127.0.0.1")) {
+		return net.ParseIP("127.0.0.2")
+	}
+	return net.ParseIP("127.0.0.1")
 }
 
 func hostOf(addr string) string {
@@ -1260,7 +1345,24 @@ func (c *Client) handleTCP(f *fconn, req dialReq) {
 }
 
 func (c *Client) handleUDP(f *fconn, req dialReq) {
-	target, err := net.DialTimeout("udp", req.Target, 10*time.Second)
+	d := &net.Dialer{Timeout: 10 * time.Second}
+	// For a target that is this same box (the common case: forwarding to
+	// a service running locally), let the OS pick the source address as
+	// usual UNLESS it would end up identical to the destination - the
+	// kernel then treats the flow as fully self-addressed, which breaks
+	// delivery of return traffic for kernel-processed protocols like
+	// IPsec/XFRM (e.g. an L2TP/IPsec server bound locally: replies
+	// generated after ESP decryption never make it back out). Binding to
+	// 127.0.0.1 as source (or 127.0.0.2 if the target itself is
+	// 127.0.0.1) avoids that ambiguity, whether the target is a loopback
+	// address or one of this machine's own real interface addresses -
+	// without touching genuinely remote forwards.
+	if host, _, err := net.SplitHostPort(req.Target); err == nil {
+		if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || isLocalIP(ip)) {
+			d.LocalAddr = &net.UDPAddr{IP: distinctLocalAddr(ip)}
+		}
+	}
+	target, err := d.Dial("udp", req.Target)
 	if err != nil {
 		f.send(frmDialErr, []byte(err.Error()))
 		return
@@ -1350,8 +1452,7 @@ func main() {
 		return
 	}
 
-	fmt.Print(banner)
-	fmt.Printf("  Tifusi Tunnel %s  |  mode: %s  |  transport: %s\n\n", version, cfg.Mode, cfg.Transport)
+	printBanner(version, cfg.Mode, cfg.Transport)
 
 	go func() {
 		sig := make(chan os.Signal, 1)

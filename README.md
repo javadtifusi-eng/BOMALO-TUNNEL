@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo-tifusi-icon.svg" alt="Tifusi Tunnel" width="190">
+  <img src="assets/logo-tifusi-icon.png" alt="Tifusi Tunnel" width="190">
 </p>
 
 <p align="center">

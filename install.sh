@@ -21,56 +21,47 @@ GO_MIN=1.21
 # palette: text is white, numbers are red, only "running" is green
 W=$'\e[97m'; R=$'\e[91m'; G=$'\e[92m'; BL=$'\e[94m'; C=$'\e[96m'; D=$'\e[90m'; N=$'\e[0m'; BD=$'\e[1m'
 
-info() { echo "${W}==>${N} ${W}$*${N}"; }
-ok()   { echo "${G} ok ${N} ${W}$*${N}"; }
-warn() { echo "${R} !! ${N} ${W}$*${N}"; }
-die()  { echo "${R}fail${N} ${W}$*${N}"; exit 1; }
+# All four of these are status/log output for the user, never a value a
+# caller should capture - printed to stderr so a caller that reads a
+# result via "x=$(some_func)" (ask/ask_required in particular, which call
+# warn() while re-prompting) can never have this text accidentally mixed
+# into the captured value.
+info() { echo "${W}==>${N} ${W}$*${N}" >&2; }
+ok()   { echo "${G} ok ${N} ${W}$*${N}" >&2; }
+warn() { echo "${R} !! ${N} ${W}$*${N}" >&2; }
+die()  { echo "${R}fail${N} ${W}$*${N}" >&2; exit 1; }
 
 cols() { local c; c=$(tput cols 2>/dev/null || echo 80); [ -n "$c" ] && echo "$c" || echo 80; }
 
 # rule N repeats a single character N times without depending on seq.
 rule() { local n="$1" ch="$2" out; printf -v out '%*s' "$n" ''; echo "${out// /$ch}"; }
 
-# boxline prints one row of the header box: "  ║<centered text, colored>║"
-# text must be plain (no ANSI codes) so its length can be measured for
-# centering; color is applied only when printing.
-boxline() {
-  local bw="$1" text="$2" color="${3:-$W}"
-  local tlen=${#text} left right
-  left=$(( (bw - tlen) / 2 )); [ "$left" -lt 0 ] && left=0
-  right=$(( bw - tlen - left )); [ "$right" -lt 0 ] && right=0
-  printf '  %s║%s' "${BL}${BD}" "$N"
-  printf '%*s' "$left" ''
-  printf '%s%s%s' "${color}${BD}" "$text" "$N"
-  printf '%*s' "$right" ''
-  printf '%s║%s\n' "${BL}${BD}" "$N"
-}
-
 banner() {
   clear 2>/dev/null || true
-  local w bw hb
-  w=$(cols)
-  bw=48
-  [ "$w" -lt $((bw + 4)) ] && bw=$((w - 4))
-  [ "$bw" -lt 24 ] && bw=24
-  hb=$(rule "$bw" "═")
-
+  local w; w=$(cols)
   echo
-  printf '  %s╔%s╗%s\n' "${BL}${BD}" "$hb" "$N"
-  boxline "$bw" ""
-  printf '  %s║%s' "${BL}${BD}" "$N"
-  local title="Tifusi" title2=" Tunnel"
-  local tlen=$((${#title} + ${#title2}))
-  local left=$(( (bw - tlen) / 2 )); [ "$left" -lt 0 ] && left=0
-  local right=$(( bw - tlen - left )); [ "$right" -lt 0 ] && right=0
-  printf '%*s' "$left" ''
-  printf '%s%s%s' "${C}${BD}" "$title" "$N"
-  printf '%s%s%s' "${R}${BD}" "$title2" "$N"
-  printf '%*s' "$right" ''
-  printf '%s║%s\n' "${BL}${BD}" "$N"
-  boxline "$bw" "reverse tunnel · client-initiated" "$D"
-  boxline "$bw" ""
-  printf '  %s╚%s╝%s\n' "${BL}${BD}" "$hb" "$N"
+  if [ "$w" -ge 40 ]; then
+    printf '%s%s' "$C" "$BD"
+    cat <<'EOF'
+ _____ ___ _____ _   _ ____ ___
+|_   _|_ _|  ___| | | / ___|_ _|
+  | |  | || |_  | | | \___ \| |
+  | |  | ||  _| | |_| |___) | |
+  |_| |___|_|    \___/|____/___|
+EOF
+    printf '%s%s' "$R" "$BD"
+    cat <<'EOF'
+ _____ _   _ _   _ _   _ _____ _
+|_   _| | | | \ | | \ | | ____| |
+  | | | | | |  \| |  \| |  _| | |
+  | | | |_| | |\  | |\  | |___| |___
+  |_|  \___/|_| \_|_| \_|_____|_____|
+EOF
+    printf '%s' "$N"
+  else
+    printf '  %s%sTIFUSI TUNNEL%s\n' "$C" "$BD" "$N"
+  fi
+  echo "  ${D}reverse tunnel · client-initiated${N}"
   echo
 }
 
@@ -312,11 +303,11 @@ pick_transport() {
   {
     echo
     echo "  ${W}${BD}Transport family:${N}"
-    echo "    ${R}1${N}) ${W}tcp${N}   raw, fastest, no disguise"
-    echo "    ${R}2${N}) ${W}tls${N}   TLS with a self-signed certificate"
-    echo "    ${R}3${N}) ${W}ws${N}    HTTP/WebSocket upgrade"
-    echo "    ${R}4${N}) ${W}wss${N}   WebSocket inside TLS  ${D}(best against DPI)${N}"
-    echo "    ${R}5${N}) ${W}udp${N}   raw UDP (KCP)  ${D}fast, no disguise, good on lossy links${N}"
+    echo "    ${R}1${N}) ${G}tcp${N}"
+    echo "    ${R}2${N}) ${G}tls${N}"
+    echo "    ${R}3${N}) ${G}ws${N}"
+    echo "    ${R}4${N}) ${G}wss${N}"
+    echo "    ${R}5${N}) ${G}udp${N}"
   } >&2
   local c; read -r -p "  ${W}choice${N} [1]: " c
   case "${c:-1}" in
@@ -330,8 +321,8 @@ pick_transport() {
   {
     echo
     echo "  ${W}${BD}$fam variant:${N}"
-    echo "    ${R}1${N}) ${W}$fam${N}      plain"
-    echo "    ${R}2${N}) ${W}${fam}mux${N}   multiplexed  ${D}(fewer sockets under many sessions)${N}"
+    echo "    ${R}1${N}) ${G}$fam${N}      ${W}${BD}plain${N}"
+    echo "    ${R}2${N}) ${G}${fam}mux${N}   ${W}${BD}multiplexed${N}"
   } >&2
   local v; read -r -p "  ${W}choice${N} [1]: " v
   case "$v" in
@@ -361,14 +352,15 @@ uses_tls() {
 arvan_hint() {
   local myip; myip=$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo YOUR_IRAN_IP)
   echo
-  echo "  ${C}${BD}ArvanCloud CDN${N} ${D}(arvancloud.ir - whitelisted inside Iran)${N}"
-  echo "   ${D}1.${N} Buy/point a domain at ArvanCloud and add it as a CDN zone."
-  echo "   ${D}2.${N} DNS ${W}A${N} record for that domain -> this server's IP: ${W}$myip${N}"
-  echo "   ${D}3.${N} In the ArvanCloud panel, enable ${W}WebSocket${N} support for the zone"
-  echo "      and set the origin port to the tunnel port you just chose."
-  echo "   ${D}4.${N} Below, use ${W}that domain${N} (not a fake one) as the SNI, so ArvanCloud"
-  echo "      can actually route the handshake to this server."
-  echo "   ${D}   Users then reach you via ArvanCloud's edge, not this VPS's raw IP.${N}"
+  echo "  ${C}${BD}ArvanCloud CDN${N}"
+  echo "  ${D}arvancloud.ir - whitelisted inside Iran${N}"
+  echo
+  echo "   ${D}1.${N} Add your domain as a CDN zone on ArvanCloud"
+  echo "   ${D}2.${N} DNS A record -> ${W}$myip${N}"
+  echo "   ${D}3.${N} Enable ${W}WebSocket${N}, origin port = tunnel port"
+  echo "   ${D}4.${N} Use that domain as the SNI below"
+  echo
+  echo "  ${D}Users then reach you via ArvanCloud, not your raw IP.${N}"
   echo
 }
 
@@ -403,10 +395,17 @@ setup_server() {
   fi
   path=$(ask "HTTP path (ws/wss only)" "/tunnel")
 
+  # Re-running this (e.g. to change transport/SNI) must not wipe out
+  # forwards that were already added and may be serving live traffic -
+  # carry over whatever the existing config already has.
+  local existing_forwards="[]"
+  [ -f "$CFG" ] && existing_forwards=$(jq -c '.forwards // []' "$CFG" 2>/dev/null || echo "[]")
+
   cfg=$(jq -n --arg l "0.0.0.0:$port" --arg t "$transport" --arg tok "$token" \
               --arg s "$sni" --arg p "$path" --arg dom "$domain" \
+              --argjson fw "$existing_forwards" \
         '{mode:"server", listen:$l, transport:$t, token:$tok, sni:$s, path:$p,
-          domain:(if $dom=="" then null else $dom end), forwards:[]}
+          domain:(if $dom=="" then null else $dom end), forwards:$fw}
          | with_entries(select(.value != null))')
   save_cfg "$cfg"
   open_port "$port" tcp
@@ -557,7 +556,7 @@ edit_settings() {
   local mode; mode=$(jq -r .mode "$CFG")
   while true; do
     step "Settings" "$mode"
-    echo "    transport : ${W}$(jq -r .transport "$CFG")${N}"
+    echo "    transport : ${G}$(jq -r .transport "$CFG")${N}"
     echo "    token     : ${W}$(jq -r .token "$CFG")${N}"
     echo "    sni       : ${W}$(jq -r .sni "$CFG")${N}"
     echo "    path      : ${W}$(jq -r .path "$CFG")${N}"
@@ -570,7 +569,7 @@ edit_settings() {
       echo "    mux_con   : ${W}$(jq -r '.mux_con // 8' "$CFG")${N}  ${D}(tcpmux/wsmux/wssmux)${N}"
     fi
     echo
-    echo "   ${R}1${N}) ${W}transport${N}    ${D}tcp/tls/ws/wss/tcpmux/wsmux/wssmux${N}"
+    echo "   ${R}1${N}) ${W}transport${N}    ${G}tcp/tls/ws/wss/tcpmux/wsmux/wssmux${N}"
     echo "   ${R}2${N}) ${W}token${N}        ${D}shared secret - must match on both servers${N}"
     echo "   ${R}3${N}) ${W}SNI${N}          ${D}fake hostname for tls/ws/wss and their mux variants${N}"
     echo "   ${R}4${N}) ${W}path${N}         ${D}HTTP path for ws/wss and their mux variants${N}"
@@ -623,7 +622,7 @@ show_status() {
   echo
   if [ -f "$CFG" ]; then
     echo "  mode      : ${W}$(jq -r .mode "$CFG")${N}"
-    echo "  transport : ${W}$(jq -r .transport "$CFG")${N}"
+    echo "  transport : ${G}$(jq -r .transport "$CFG")${N}"
     echo "  token     : ${W}$(jq -r .token "$CFG")${N}"
     [ "$(jq -r .mode "$CFG")" = "server" ] && list_forwards
   else
