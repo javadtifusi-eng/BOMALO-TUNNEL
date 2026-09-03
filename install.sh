@@ -293,6 +293,31 @@ pick_transport() {
   esac
 }
 
+# true (0) if $1 is a ws-family transport (ws/wss/wsmux/wssmux) - the only
+# ones that speak real HTTP/WebSocket and can therefore sit behind a
+# WebSocket-aware CDN.
+is_ws_family() {
+  case "$1" in ws|wss|wsmux|wssmux) return 0 ;; *) return 1 ;; esac
+}
+
+# arvan_hint prints a short setup guide for fronting this server's tunnel
+# port with ArvanCloud - an Iranian CDN that is itself whitelisted inside
+# Iran, so traffic to it is far less likely to be blocked outright than
+# traffic straight to this VPS's bare IP.
+arvan_hint() {
+  local myip; myip=$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo YOUR_IRAN_IP)
+  echo
+  echo "  ${C}${BD}ArvanCloud CDN${N} ${D}(arvancloud.ir - whitelisted inside Iran)${N}"
+  echo "   ${D}1.${N} Buy/point a domain at ArvanCloud and add it as a CDN zone."
+  echo "   ${D}2.${N} DNS ${W}A${N} record for that domain -> this server's IP: ${W}$myip${N}"
+  echo "   ${D}3.${N} In the ArvanCloud panel, enable ${W}WebSocket${N} support for the zone"
+  echo "      and set the origin port to the tunnel port you just chose."
+  echo "   ${D}4.${N} Below, use ${W}that domain${N} (not a fake one) as the SNI, so ArvanCloud"
+  echo "      can actually route the handshake to this server."
+  echo "   ${D}   Users then reach you via ArvanCloud's edge, not this VPS's raw IP.${N}"
+  echo
+}
+
 # ------------------------------------------------------------------ setup
 
 setup_server() {
@@ -303,6 +328,10 @@ setup_server() {
   token=$(ask "Shared token (leave empty to generate)" "")
   [ -z "$token" ] && token=$("$BIN" -gen-token)
   transport=$(pick_transport)
+  if is_ws_family "$transport"; then
+    read -r -p "  ${W}Sit this behind a CDN like ArvanCloud?${N} [y/N]: " use_cdn
+    [[ "$use_cdn" =~ ^[Yy]$ ]] && arvan_hint
+  fi
   sni=$(ask "SNI / fake hostname" "www.bing.com")
   path=$(ask "HTTP path (ws/wss only)" "/tunnel")
 
