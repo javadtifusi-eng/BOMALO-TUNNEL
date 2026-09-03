@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 660" width="800" height="660" role="img" aria-label="Tifusi Tunnel">
+  <defs>
+    <radialGradient id="tt-glow" cx="50%" cy="34%" r="66%">
+      <stop offset="0%" stop-color="#1c1712"/>
+      <stop offset="55%" stop-color="#0B0D10"/>
+      <stop offset="100%" stop-color="#0B0D10"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="0" y="0" width="800" height="660" fill="url(#tt-glow)"/>
+
+  <!-- double-headed Persepolis capital -->
+  <g fill="none" stroke="#F4EEE2" stroke-linejoin="round" stroke-linecap="round">
+
+    <!-- right head -->
+    <g>
+      <path d="M400,340 L420,300 L450,270 L478,255 L510,258 L548,255 L585,248 L588,238 L565,222 L540,195 L515,168 L495,152 L478,158 L455,180 L445,210 L430,245 L415,285 Z" stroke-width="6"/>
+      <path d="M485,155 L500,120 L505,150" stroke-width="5"/>
+      <circle cx="525" cy="195" r="5" fill="#F4EEE2" stroke="none"/>
+      <path d="M494,168 L471,190 L461,220 L446,255 L431,295" stroke-width="3.5"/>
+      <path d="M465,185 L478,170 M450,215 L465,202 M435,250 L450,238" stroke-width="4"/>
+    </g>
+
+    <!-- mirrored left head -->
+    <g transform="translate(800,0) scale(-1,1)">
+      <path d="M400,340 L420,300 L450,270 L478,255 L510,258 L548,255 L585,248 L588,238 L565,222 L540,195 L515,168 L495,152 L478,158 L455,180 L445,210 L430,245 L415,285 Z" stroke-width="6"/>
+      <path d="M485,155 L500,120 L505,150" stroke-width="5"/>
+      <circle cx="525" cy="195" r="5" fill="#F4EEE2" stroke="none"/>
+      <path d="M494,168 L471,190 L461,220 L446,255 L431,295" stroke-width="3.5"/>
+      <path d="M465,185 L478,170 M450,215 L465,202 M435,250 L450,238" stroke-width="4"/>
+    </g>
+
+    <!-- saddle where the two necks meet -->
+    <path d="M400,320 L400,340" stroke-width="6"/>
+
+    <!-- capital block -->
+    <path d="M330,338 L470,338 L446,390 L354,390 Z" stroke-width="5"/>
+
+    <!-- fluted column -->
+    <path d="M362,390 L438,390 L420,610 L380,610 Z" stroke-width="5"/>
+    <path d="M377,391 L388,609 M392,391 L396,609 M408,391 L404,609 M423,391 L412,609"
+          stroke-width="2.5"/>
+
+    <!-- base -->
+    <path d="M366,610 L434,610 L440,636 L360,636 Z" stroke-width="5"/>
+  </g>
+</svg>

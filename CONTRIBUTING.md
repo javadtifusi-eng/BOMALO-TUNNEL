@@ -1,14 +1,13 @@
-# Contributing to Bomalo Tunnel
+# Contributing to Tifusi Tunnel
 
 Thank you for your interest in contributing!
 
 ## Development Setup
 
 ```bash
-git clone https://github.com/yourusername/bomalo-tunnel.git
-cd bomalo-tunnel
-go mod tidy
-make build
+git clone https://github.com/javadtifusi-eng/Tifusi-Tunnel.git
+cd Tifusi-Tunnel
+go build -o tifusi .
 ```
 
 ## Code Style
@@ -30,7 +29,7 @@ make build
 
 ```
 feat: add new transport
-fix: resolve memory leak in QUIC
+fix: resolve memory leak in mux session
 docs: update README with new examples
 refactor: simplify tunnel engine
 test: add unit tests for nettest

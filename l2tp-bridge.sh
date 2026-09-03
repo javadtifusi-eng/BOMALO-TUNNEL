@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# L2TP-over-WireGuard bridge — standalone, separate from Bomalo Tunnel.
+# L2TP-over-WireGuard bridge — standalone, separate from Tifusi Tunnel.
 #
 # Problem this solves: L2TP/IPsec's peer identity must stay consistent
 # across ports (500, 4500) and across the life of a session. An app-level
@@ -10,7 +10,7 @@
 # L2TP/IPsec to a LAN host, which is a well-understood, working scenario.
 #
 # Usage:
-#   bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/BOMALO-TUNNEL/main/l2tp-bridge.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/Tifusi-Tunnel/main/l2tp-bridge.sh)
 #
 set -uo pipefail
 
@@ -92,7 +92,7 @@ EOF
   chmod 600 "$WG_CFG"
   open_port "$port"
   bring_up
-  warn "on the Iran server, make sure Bomalo itself is NOT also forwarding UDP 500/4500 -"
+  warn "on the Iran server, make sure Tifusi itself is NOT also forwarding UDP 500/4500 -"
   echo "   ${D}(bm -> Add forwarded ports / Remove a forwarded port) - both would fight over the same ports.${N}"
 }
 
@@ -195,7 +195,7 @@ teardown() {
 
 menu() {
   echo
-  echo "  ${W}${BD}L2TP-over-WireGuard bridge${N}  ${D}standalone, separate from the Bomalo installer${N}"
+  echo "  ${W}${BD}L2TP-over-WireGuard bridge${N}  ${D}standalone, separate from the Tifusi installer${N}"
   echo "   ${R}1${N}) ${W}Set up - this is the IRAN side${N}"
   echo "   ${R}2${N}) ${W}Set up - this is the FOREIGN side${N}"
   echo "   ${R}3${N}) ${W}Status${N}"

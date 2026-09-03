@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bomalo Tunnel installer / manager
+# Tifusi Tunnel installer / manager
 #   bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/Tifusi-Tunnel/main/install.sh)
 set -uo pipefail
 
@@ -9,17 +9,17 @@ BRANCH="main"
 RAW="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/${BRANCH}"
 RELEASE="https://github.com/${REPO_USER}/${REPO_NAME}/releases/latest/download"
 
-BIN=/usr/local/bin/bomalo
-MENU=/usr/local/bin/bomalo-menu
-CFG_DIR=/etc/bomalo
+BIN=/usr/local/bin/tifusi
+MENU=/usr/local/bin/tifusi-menu
+CFG_DIR=/etc/tifusi
 CFG=$CFG_DIR/config.json
-UNIT=/etc/systemd/system/bomalo.service
-CRON=/etc/cron.d/bomalo
-SRC_DIR=/opt/bomalo-src
+UNIT=/etc/systemd/system/tifusi.service
+CRON=/etc/cron.d/tifusi
+SRC_DIR=/opt/tifusi-src
 GO_MIN=1.21
 
 # palette: text is white, numbers are red, only "running" is green
-W=$'\e[97m'; R=$'\e[91m'; G=$'\e[92m'; BL=$'\e[94m'; D=$'\e[90m'; N=$'\e[0m'; BD=$'\e[1m'
+W=$'\e[97m'; R=$'\e[91m'; G=$'\e[92m'; BL=$'\e[94m'; C=$'\e[96m'; D=$'\e[90m'; N=$'\e[0m'; BD=$'\e[1m'
 
 info() { echo "${W}==>${N} ${W}$*${N}"; }
 ok()   { echo "${G} ok ${N} ${W}$*${N}"; }
@@ -28,38 +28,49 @@ die()  { echo "${R}fail${N} ${W}$*${N}"; exit 1; }
 
 cols() { local c; c=$(tput cols 2>/dev/null || echo 80); [ -n "$c" ] && echo "$c" || echo 80; }
 
+# rule N repeats a single character N times without depending on seq.
+rule() { local n="$1" ch="$2" out; printf -v out '%*s' "$n" ''; echo "${out// /$ch}"; }
+
+# boxline prints one row of the header box: "  ║<centered text, colored>║"
+# text must be plain (no ANSI codes) so its length can be measured for
+# centering; color is applied only when printing.
+boxline() {
+  local bw="$1" text="$2" color="${3:-$W}"
+  local tlen=${#text} left right
+  left=$(( (bw - tlen) / 2 )); [ "$left" -lt 0 ] && left=0
+  right=$(( bw - tlen - left )); [ "$right" -lt 0 ] && right=0
+  printf '  %s║%s' "${BL}${BD}" "$N"
+  printf '%*s' "$left" ''
+  printf '%s%s%s' "${color}${BD}" "$text" "$N"
+  printf '%*s' "$right" ''
+  printf '%s║%s\n' "${BL}${BD}" "$N"
+}
+
 banner() {
   clear 2>/dev/null || true
-  local rule="======================================================================"
-  printf '%s' "${D}"
-  echo "$rule"
-  printf '%s' "$N"
-  printf '%s' "${G}${BD}"
-  cat <<'EOF'
-      ########     ######   ##      ##   ######   ##           ######
-     ##      ## ##      ## ####  #### ##      ## ##         ##      ##
-    ##      ## ##      ## ##  ##  ## ##      ## ##         ##      ##
-   ########   ##      ## ##  ##  ## ########## ##         ##      ##
-  ##      ## ##      ## ##      ## ##      ## ##         ##      ##
- ##      ## ##      ## ##      ## ##      ## ##         ##      ##
-########     ######   ##      ## ##      ## ##########   ######
-EOF
-  printf '%s' "${N}${D}"
-  echo "----------------------------------------------------------------"
-  printf '%s' "${N}${R}${BD}"
-  cat <<'EOF'
-      ##### #   # #   # #   # ##### #
-       #   #   # ##  # ##  # #     #
-      #   #   # # # # # # # #     #
-     #   #   # # # # # # # ####  #
-    #   #   # #  ## #  ## #     #
-   #   #   # #   # #   # #     #
-  #    ###  #   # #   # ##### #####
-EOF
-  printf '%s' "${N}${D}"
-  echo "$rule"
-  printf '%s' "$N"
-  echo "  ${W}reverse tunnel${N}  ${D}·  client-initiated${N}"
+  local w bw hb
+  w=$(cols)
+  bw=48
+  [ "$w" -lt $((bw + 4)) ] && bw=$((w - 4))
+  [ "$bw" -lt 24 ] && bw=24
+  hb=$(rule "$bw" "═")
+
+  echo
+  printf '  %s╔%s╗%s\n' "${BL}${BD}" "$hb" "$N"
+  boxline "$bw" ""
+  printf '  %s║%s' "${BL}${BD}" "$N"
+  local title="Tifusi" title2=" Tunnel"
+  local tlen=$((${#title} + ${#title2}))
+  local left=$(( (bw - tlen) / 2 )); [ "$left" -lt 0 ] && left=0
+  local right=$(( bw - tlen - left )); [ "$right" -lt 0 ] && right=0
+  printf '%*s' "$left" ''
+  printf '%s%s%s' "${C}${BD}" "$title" "$N"
+  printf '%s%s%s' "${R}${BD}" "$title2" "$N"
+  printf '%*s' "$right" ''
+  printf '%s║%s\n' "${BL}${BD}" "$N"
+  boxline "$bw" "reverse tunnel · client-initiated" "$D"
+  boxline "$bw" ""
+  printf '  %s╚%s╝%s\n' "${BL}${BD}" "$hb" "$N"
   echo
 }
 
@@ -150,16 +161,16 @@ ensure_go() {
 bin_version() {
   [ -x "$BIN" ] || return 1
   local v; v=$("$BIN" -version 2>/dev/null | head -1)
-  case "$v" in bomalo\ *) echo "$v" ;; *) return 1 ;; esac
+  case "$v" in tifusi\ *) echo "$v" ;; *) return 1 ;; esac
 }
 
 stop_legacy() {
   bin_version >/dev/null 2>&1 && return
   [ -x "$BIN" ] || return
-  warn "an older bomalo (the iptables/bash version) is installed at $BIN"
+  warn "an older version (the iptables/bash version) is installed at $BIN"
   local units u
   units=$(systemctl list-units --all --plain --no-legend 2>/dev/null \
-          | awk '{print $1}' | grep -E '^(bomalo|tunnel)' | grep -v '^bomalo.service$')
+          | awk '{print $1}' | grep -E '^(bomalo|tifusi|tunnel)' | grep -v '^tifusi.service$')
   if [ -n "$units" ]; then
     for u in $units; do systemctl disable --now "$u" >/dev/null 2>&1; done
     echo "   ${D}stopped legacy services${N}"
@@ -187,17 +198,18 @@ install_binary() {
   stop_legacy
   local a; a=$(arch_tag)
   info "looking for a prebuilt binary"
-  if curl -fsSL "${RELEASE}/bomalo-linux-${a}" -o /tmp/bomalo 2>/dev/null && [ -s /tmp/bomalo ]; then
-    install -m 0755 /tmp/bomalo "$BIN"; rm -f /tmp/bomalo
+  if curl -fsSL "${RELEASE}/tifusi-linux-${a}" -o /tmp/tifusi 2>/dev/null && [ -s /tmp/tifusi ]; then
+    install -m 0755 /tmp/tifusi "$BIN"; rm -f /tmp/tifusi
     ok "installed $(bin_version)"
   else
     warn "no release binary found, building from source"
     ensure_go
     mkdir -p "$SRC_DIR"
-    if [ -f ./main.go ] && [ -f ./go.mod ]; then
-      cp ./main.go ./go.mod "$SRC_DIR/"
+    if [ -f ./main.go ] && [ -f ./mux.go ] && [ -f ./go.mod ]; then
+      cp ./main.go ./mux.go ./go.mod "$SRC_DIR/"
     else
       curl -fsSL "$RAW/main.go" -o "$SRC_DIR/main.go" || die "could not download main.go"
+      curl -fsSL "$RAW/mux.go"  -o "$SRC_DIR/mux.go"  || die "could not download mux.go"
       curl -fsSL "$RAW/go.mod"  -o "$SRC_DIR/go.mod"  || die "could not download go.mod"
     fi
     ( cd "$SRC_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" . ) || die "build failed"
@@ -212,7 +224,7 @@ install_binary() {
 write_unit() {
   cat > "$UNIT" <<EOF
 [Unit]
-Description=Bomalo Tunnel
+Description=Tifusi Tunnel
 After=network-online.target
 Wants=network-online.target
 
@@ -238,10 +250,10 @@ save_cfg() {
 
 restart_service() {
   write_unit
-  systemctl enable bomalo >/dev/null 2>&1
-  systemctl restart bomalo
+  systemctl enable tifusi >/dev/null 2>&1
+  systemctl restart tifusi
   sleep 1
-  if systemctl is-active --quiet bomalo; then ok "service is running"
+  if systemctl is-active --quiet tifusi; then ok "service is running"
   else warn "service failed - check the logs in Manage"; fi
 }
 
@@ -264,13 +276,47 @@ pick_transport() {
   {
     echo
     echo "  ${W}Transport:${N}"
-    echo "    ${R}1${N}) ${W}tls${N}   TLS with a self-signed certificate"
-    echo "    ${R}2${N}) ${W}wss${N}   HTTP/WebSocket upgrade inside TLS  ${D}(best against DPI)${N}"
-    echo "    ${R}3${N}) ${W}ws${N}    plain HTTP/WebSocket upgrade"
-    echo "    ${R}4${N}) ${W}tcp${N}   raw TCP, fastest, no disguise"
+    echo "    ${R}1${N}) ${W}tls${N}      TLS with a self-signed certificate"
+    echo "    ${R}2${N}) ${W}wss${N}      HTTP/WebSocket upgrade inside TLS  ${D}(best against DPI)${N}"
+    echo "    ${R}3${N}) ${W}ws${N}       plain HTTP/WebSocket upgrade"
+    echo "    ${R}4${N}) ${W}tcp${N}      raw TCP, fastest, no disguise"
+    echo "    ${R}5${N}) ${W}wssmux${N}   like wss, multiplexed  ${D}(fewer sockets under many sessions)${N}"
+    echo "    ${R}6${N}) ${W}wsmux${N}    like ws, multiplexed"
+    echo "    ${R}7${N}) ${W}tcpmux${N}   like tcp, multiplexed"
+    echo "    ${R}8${N}) ${W}udp${N}      raw UDP (KCP)  ${D}fast, no TLS, good on lossy links${N}"
   } >&2
   local c; read -r -p "  ${W}choice${N} [1]: " c
-  case "${c:-1}" in 2) echo wss ;; 3) echo ws ;; 4) echo tcp ;; *) echo tls ;; esac
+  case "${c:-1}" in
+    2) echo wss ;; 3) echo ws ;; 4) echo tcp ;;
+    5) echo wssmux ;; 6) echo wsmux ;; 7) echo tcpmux ;;
+    8) echo udp ;;
+    *) echo tls ;;
+  esac
+}
+
+# true (0) if $1 is a ws-family transport (ws/wss/wsmux/wssmux) - the only
+# ones that speak real HTTP/WebSocket and can therefore sit behind a
+# WebSocket-aware CDN.
+is_ws_family() {
+  case "$1" in ws|wss|wsmux|wssmux) return 0 ;; *) return 1 ;; esac
+}
+
+# arvan_hint prints a short setup guide for fronting this server's tunnel
+# port with ArvanCloud - an Iranian CDN that is itself whitelisted inside
+# Iran, so traffic to it is far less likely to be blocked outright than
+# traffic straight to this VPS's bare IP.
+arvan_hint() {
+  local myip; myip=$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo YOUR_IRAN_IP)
+  echo
+  echo "  ${C}${BD}ArvanCloud CDN${N} ${D}(arvancloud.ir - whitelisted inside Iran)${N}"
+  echo "   ${D}1.${N} Buy/point a domain at ArvanCloud and add it as a CDN zone."
+  echo "   ${D}2.${N} DNS ${W}A${N} record for that domain -> this server's IP: ${W}$myip${N}"
+  echo "   ${D}3.${N} In the ArvanCloud panel, enable ${W}WebSocket${N} support for the zone"
+  echo "      and set the origin port to the tunnel port you just chose."
+  echo "   ${D}4.${N} Below, use ${W}that domain${N} (not a fake one) as the SNI, so ArvanCloud"
+  echo "      can actually route the handshake to this server."
+  echo "   ${D}   Users then reach you via ArvanCloud's edge, not this VPS's raw IP.${N}"
+  echo
 }
 
 # ------------------------------------------------------------------ setup
@@ -283,6 +329,10 @@ setup_server() {
   token=$(ask "Shared token (leave empty to generate)" "")
   [ -z "$token" ] && token=$("$BIN" -gen-token)
   transport=$(pick_transport)
+  if is_ws_family "$transport"; then
+    read -r -p "  ${W}Sit this behind a CDN like ArvanCloud?${N} [y/N]: " use_cdn
+    [[ "$use_cdn" =~ ^[Yy]$ ]] && arvan_hint
+  fi
   sni=$(ask "SNI / fake hostname" "www.bing.com")
   path=$(ask "HTTP path (ws/wss only)" "/tunnel")
 
@@ -319,11 +369,11 @@ setup_client() {
   transport=$(pick_transport)
   sni=$(ask "SNI (must match the Iran server)" "www.bing.com")
   path=$(ask "HTTP path (ws/wss only)" "/tunnel")
-  pool=$(ask "Warm connections to keep open" 8)
+  pool=$(ask "Warm connections to keep open (plain transports) / physical mux links (tcpmux, wsmux, wssmux)" 8)
 
   cfg=$(jq -n --arg s "$ip:$port" --arg t "$transport" --arg tok "$token" \
               --arg sn "$sni" --arg p "$path" --argjson pool "$pool" \
-        '{mode:"client", server:$s, transport:$t, token:$tok, sni:$sn, path:$p, pool:$pool}')
+        '{mode:"client", server:$s, transport:$t, token:$tok, sni:$sn, path:$p, pool:$pool, mux_con:$pool}')
   save_cfg "$cfg"
   ok "client configured"
   echo "  ${D}Ports are chosen on the Iran side; this machine only dials out.${N}"
@@ -428,18 +478,19 @@ edit_settings() {
       echo "    listen    : ${W}$(jq -r .listen "$CFG")${N}"
     else
       echo "    server    : ${W}$(jq -r .server "$CFG")${N}"
-      echo "    pool      : ${W}$(jq -r .pool "$CFG")${N}"
+      echo "    pool      : ${W}$(jq -r .pool "$CFG")${N}  ${D}(plain transports)${N}"
+      echo "    mux_con   : ${W}$(jq -r '.mux_con // 8' "$CFG")${N}  ${D}(tcpmux/wsmux/wssmux)${N}"
     fi
     echo
-    echo "   ${R}1${N}) ${W}transport${N}    ${D}tcp / tls / ws / wss${N}"
+    echo "   ${R}1${N}) ${W}transport${N}    ${D}tcp/tls/ws/wss/tcpmux/wsmux/wssmux${N}"
     echo "   ${R}2${N}) ${W}token${N}        ${D}shared secret - must match on both servers${N}"
-    echo "   ${R}3${N}) ${W}SNI${N}          ${D}fake hostname for tls/ws/wss${N}"
-    echo "   ${R}4${N}) ${W}path${N}         ${D}HTTP path for ws/wss${N}"
+    echo "   ${R}3${N}) ${W}SNI${N}          ${D}fake hostname for tls/ws/wss and their mux variants${N}"
+    echo "   ${R}4${N}) ${W}path${N}         ${D}HTTP path for ws/wss and their mux variants${N}"
     if [ "$mode" = server ]; then
       echo "   ${R}5${N}) ${W}tunnel port${N}  ${D}what the foreign server dials${N}"
     else
       echo "   ${R}5${N}) ${W}Iran ip:port${N} ${D}where this client connects${N}"
-      echo "   ${R}6${N}) ${W}pool${N}         ${D}warm connections kept open${N}"
+      echo "   ${R}6${N}) ${W}pool / mux_con${N}  ${D}warm connections / physical mux links${N}"
     fi
     echo "   ${R}7${N}) ${W}Performance preset${N}  ${D}BBR + buffer tuning${N}"
     echo "   ${R}0${N}) ${W}back${N}"
@@ -455,8 +506,8 @@ edit_settings() {
            v=$(ask "Iran server ip:port" "$(jq -r .server "$CFG")"); set_field server "$v"
          fi ;;
       6) [ "$mode" = client ] || { warn "client only"; continue; }
-         v=$(ask "warm connections" 8)
-         tmp=$(jq --argjson p "$v" '.pool=$p' "$CFG") && echo "$tmp" | jq . > "$CFG" && ok "pool = $v" ;;
+         v=$(ask "warm connections / mux links" 8)
+         tmp=$(jq --argjson p "$v" '.pool=$p | .mux_con=$p' "$CFG") && echo "$tmp" | jq . > "$CFG" && ok "pool = mux_con = $v" ;;
       7) performance ;;
       0) break ;;
       *) warn "invalid choice" ;;
@@ -469,7 +520,7 @@ edit_settings() {
 
 show_status() {
   echo
-  systemctl status bomalo --no-pager -l 2>/dev/null | head -12
+  systemctl status tifusi --no-pager -l 2>/dev/null | head -12
   echo
   if [ -f "$CFG" ]; then
     echo "  mode      : ${W}$(jq -r .mode "$CFG")${N}"
@@ -483,10 +534,10 @@ show_status() {
 
 write_cron() {
   {
-    echo "# Bomalo Tunnel watchdog"
+    echo "# Tifusi Tunnel watchdog"
     echo "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
-    echo "*/5 * * * * root systemctl is-active --quiet bomalo || systemctl restart bomalo"
-    [ "$1" = 1 ] && echo "0 4 * * * root systemctl restart bomalo"
+    echo "*/5 * * * * root systemctl is-active --quiet tifusi || systemctl restart tifusi"
+    [ "$1" = 1 ] && echo "0 4 * * * root systemctl restart tifusi"
   } > "$CRON"
   chmod 0644 "$CRON"
   systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || true
@@ -561,9 +612,13 @@ setup_wg_bridge() {
   if [ "$role" = 1 ]; then
     read -r -p "  ${W}Route L2TP/IPsec (UDP 500,4500) through this bridge?${N} [Y/n]: " rl
     if [[ "${rl:-y}" =~ ^[Yy]?$ ]]; then
-      postup="PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -t nat -A PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -A POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j MASQUERADE; iptables -A FORWARD -o %i -j ACCEPT; iptables -A FORWARD -i %i -j ACCEPT"
-      postdown="PostDown = iptables -t nat -D PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -D POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j MASQUERADE; iptables -D FORWARD -o %i -j ACCEPT; iptables -D FORWARD -i %i -j ACCEPT"
-      # this now conflicts with Bomalo's own relay for the same ports - drop those forwards
+      # a FIXED-address SNAT, not MASQUERADE: this interface's address never
+      # changes, and a fixed source keeps the peer identity IPsec expects
+      # stable across the life of a session (see l2tp-bridge.sh for the
+      # same rationale in the standalone version of this bridge).
+      postup="PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -t nat -A PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -A POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j SNAT --to-source 10.200.0.1; iptables -A FORWARD -o %i -j ACCEPT; iptables -A FORWARD -i %i -j ACCEPT"
+      postdown="PostDown = iptables -t nat -D PREROUTING -p udp -m multiport --dports 500,4500 -j DNAT --to-destination 10.200.0.2; iptables -t nat -D POSTROUTING -o %i -p udp -m multiport --dports 500,4500 -j SNAT --to-source 10.200.0.1; iptables -D FORWARD -o %i -j ACCEPT; iptables -D FORWARD -i %i -j ACCEPT"
+      # this now conflicts with Tifusi's own relay for the same ports - drop those forwards
       if [ -f "$CFG" ] && [ "$(jq -r .mode "$CFG" 2>/dev/null)" = "server" ]; then
         local tmp; tmp=$(jq '.forwards |= map(select(.listen != "0.0.0.0:500" and .listen != "0.0.0.0:4500"))' "$CFG")
         echo "$tmp" | jq . > "$CFG"
@@ -571,6 +626,19 @@ setup_wg_bridge() {
       fi
       open_port "$port" udp
     fi
+  else
+    # rp_filter must be off from the very first packet, not just after
+    # wg-quick's own PostUp runs (which only applies once the interface is
+    # already up) - otherwise the kernel can silently drop the relayed
+    # L2TP/IPsec packets arriving over wg0 before they ever reach xl2tpd/
+    # strongSwan, even though a plain ping across the bridge works fine.
+    postup="PostUp = sysctl -w net.ipv4.conf.all.rp_filter=0>/dev/null; sysctl -w net.ipv4.conf.%i.rp_filter=0>/dev/null"
+    {
+      grep -q '^net.ipv4.conf.all.rp_filter' /etc/sysctl.conf 2>/dev/null && \
+        sed -i 's/^net.ipv4.conf.all.rp_filter.*/net.ipv4.conf.all.rp_filter=0/' /etc/sysctl.conf || \
+        echo 'net.ipv4.conf.all.rp_filter=0' >> /etc/sysctl.conf
+    }
+    sysctl -p >/dev/null 2>&1
   fi
 
   cat > "$WG_CFG" <<EOF
@@ -630,14 +698,14 @@ apply_perf_preset() {
     3) rmem=33554432; wmem=33554432 ;;   # Aggressive - max headroom, more RAM
     *) warn "invalid preset"; return ;;
   esac
-  sed -i '/# Bomalo Tunnel performance preset/,/# end Bomalo Tunnel preset/d' /etc/sysctl.conf
+  sed -i '/# Tifusi Tunnel performance preset/,/# end Tifusi Tunnel preset/d' /etc/sysctl.conf
   {
-    echo "# Bomalo Tunnel performance preset"
+    echo "# Tifusi Tunnel performance preset"
     echo "net.core.default_qdisc=fq"
     echo "net.ipv4.tcp_congestion_control=bbr"
     echo "net.core.rmem_max=$rmem"
     echo "net.core.wmem_max=$wmem"
-    echo "# end Bomalo Tunnel preset"
+    echo "# end Tifusi Tunnel preset"
   } >> /etc/sysctl.conf
   sysctl -p >/dev/null 2>&1
   ok "applied - tcp_congestion_control is now $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
@@ -659,9 +727,9 @@ performance() {
 }
 
 uninstall() {
-  read -r -p "  ${W}Remove Bomalo Tunnel completely?${N} [y/N]: " a
+  read -r -p "  ${W}Remove Tifusi Tunnel completely?${N} [y/N]: " a
   [[ "$a" =~ ^[Yy]$ ]] || return
-  systemctl disable --now bomalo >/dev/null 2>&1
+  systemctl disable --now tifusi >/dev/null 2>&1
   systemctl disable --now "wg-quick@${WG_IF}" >/dev/null 2>&1
   rm -f "$UNIT" "$BIN" "$CRON" "$MENU" /usr/local/bin/bm "$WG_CFG"
   rm -rf "$CFG_DIR" "$SRC_DIR"
@@ -672,8 +740,8 @@ uninstall() {
 manage() {
   while true; do
     banner
-    echo "  ${W}${BD}Manage${N}"
-    echo "  ${D}------------------------------${N}"
+    echo "  ${C}${BD}▸ Manage${N}"
+    echo "  ${D}$(rule 34 "─")${N}"
     echo "   ${R}1${N}) ${W}Edit settings${N}   ${D}(transport, token, SNI, port)${N}"
     echo "   ${R}2${N}) ${W}Status${N}"
     echo "   ${R}3${N}) ${W}Live logs${N}"
@@ -687,7 +755,7 @@ manage() {
     case "$c" in
       1) edit_settings; pause ;;
       2) show_status; pause ;;
-      3) journalctl -u bomalo -f -n 50 ;;
+      3) journalctl -u tifusi -f -n 50 ;;
       4) restart_service; pause ;;
       5) watchdog ;;
       6) setup_wg_bridge; wg_status; pause ;;
@@ -705,13 +773,13 @@ menu() {
     banner
     local ver st mode
     ver=$(bin_version 2>/dev/null) || ver="not installed"
-    if systemctl is-active --quiet bomalo 2>/dev/null; then st="${G}running${N}"
+    if systemctl is-active --quiet tifusi 2>/dev/null; then st="${G}running${N}"
     elif [ -f "$CFG" ]; then st="${W}stopped${N}"
     else st="${W}not configured${N}"; fi
     mode=""
     [ -f "$CFG" ] && mode="   ${D}mode:${N} ${W}$(jq -r .mode "$CFG")${N}"
     echo "  ${W}$ver${N}   ${D}service:${N} $st$mode"
-    echo "  ${D}------------------------------${N}"
+    echo "  ${D}$(rule 34 "─")${N}"
     echo "   ${R}${BD}1${N}) ${W}${BD}Install / update the binary${N}"
     echo "   ${R}${BD}2${N}) ${W}${BD}Set up as IRAN side${N}      ${D}(server)${N}"
     echo "   ${R}${BD}3${N}) ${W}${BD}Set up as FOREIGN side${N}   ${D}(client)${N}"

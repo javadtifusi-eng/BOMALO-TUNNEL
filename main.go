@@ -1,4 +1,4 @@
-// Bomalo Tunnel - reverse tunnel engine
+// Tifusi Tunnel - reverse tunnel engine
 //
 // Topology:
 //
@@ -40,16 +40,17 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	kcp "github.com/xtaci/kcp-go/v5"
 )
 
 const version = "1.0.0"
 
 const banner = `
-  ____                        _         _____                       _
- | __ )  ___  _ __ ___   __ _| | ___   |_   _|   _ _ __  _ __   ___| |
- |  _ \ / _ \| '_ ' _ \ / _' | |/ _ \    | || | | | '_ \| '_ \ / _ \ |
- | |_) | (_) | | | | | | (_| | | (_) |   | || |_| | | | | | | |  __/ |
- |____/ \___/|_| |_| |_|\__,_|_|\___/    |_| \__,_|_| |_|_| |_|\___|_|
+ _____ ___ ___ _   _ ___ ___   _____ _   _ _  _ _  _ ___ _
+|_   _|_ _| __| | | / __|_ _| |_   _| | | | \| | \| | __| |
+  | |  | || _|| |_| \__ \| |    | | | |_| | .` + "`" + ` | .` + "`" + ` | _|| |__
+  |_| |___|_|  \___/|___/___|   |_|  \___/|_|\_|_|\_|___|____|
 `
 
 // ---------------------------------------------------------------- config
@@ -65,11 +66,12 @@ type Config struct {
 	Mode      string    `json:"mode"`      // server | client
 	Listen    string    `json:"listen"`    // server only: tunnel listen address
 	Server    string    `json:"server"`    // client only: iran_ip:tunnel_port
-	Transport string    `json:"transport"` // tcp | tls | ws | wss
+	Transport string    `json:"transport"` // tcp | tls | ws | wss | tcpmux | wsmux | wssmux | udp
 	Token     string    `json:"token"`
-	SNI       string    `json:"sni"`  // TLS server name / certificate CN
-	Path      string    `json:"path"` // HTTP path used by ws/wss
-	Pool      int       `json:"pool"` // client only: idle tunnel connections kept warm
+	SNI       string    `json:"sni"`     // TLS server name / certificate CN
+	Path      string    `json:"path"`    // HTTP path used by ws/wss/wsmux/wssmux
+	Pool      int       `json:"pool"`    // client only: idle tunnel connections kept warm (non-mux transports)
+	MuxCon    int       `json:"mux_con"` // client only: physical connections kept open (mux transports)
 	Forwards  []Forward `json:"forwards"`
 	Verbose   bool      `json:"verbose"`
 }
@@ -86,6 +88,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Pool <= 0 {
 		c.Pool = 8
+	}
+	if c.MuxCon <= 0 {
+		c.MuxCon = 8
 	}
 	for i := range c.Forwards {
 		if c.Forwards[i].Net == "" {
@@ -111,9 +116,9 @@ func (c *Config) validate() error {
 		return fmt.Errorf("mode must be \"server\" or \"client\", got %q", c.Mode)
 	}
 	switch c.Transport {
-	case "tcp", "tls", "ws", "wss":
+	case "tcp", "tls", "ws", "wss", "tcpmux", "wsmux", "wssmux", "udp":
 	default:
-		return fmt.Errorf("transport must be tcp, tls, ws or wss, got %q", c.Transport)
+		return fmt.Errorf("transport must be tcp, tls, ws, wss, tcpmux, wsmux, wssmux or udp, got %q", c.Transport)
 	}
 	if len(c.Token) < 8 {
 		return errors.New("token must be at least 8 characters")
@@ -240,6 +245,20 @@ func tlsServerConfig(sni string) (*tls.Config, error) {
 		MinVersion:   tls.VersionTLS12,
 		NextProtos:   []string{"http/1.1"},
 	}, nil
+}
+
+// tuneKCP configures a KCP session for the "udp" transport: fast mode (no
+// Nagle-style delay, aggressive retransmit), a generous window so the
+// multi-connection pool doesn't stall on one slow link, and stream mode so
+// Read/Write behave like a plain byte stream instead of preserving message
+// boundaries - required since fconn's framing already does that itself.
+func tuneKCP(sess *kcp.UDPSession) {
+	sess.SetStreamMode(true)
+	sess.SetWriteDelay(false)
+	sess.SetNoDelay(1, 10, 2, 1)
+	sess.SetWindowSize(1024, 1024)
+	sess.SetMtu(1350)
+	sess.SetACKNoDelay(true)
 }
 
 // wsKey/wsAccept keep the handshake byte-identical to a real WebSocket upgrade.
@@ -483,14 +502,45 @@ func (w *wsConn) readMessage() ([]byte, error) {
 
 // ---------------------------------------------------------------- helpers
 
+// closeWriter is implemented by connections that support a TCP-style half
+// close (*net.TCPConn, *tls.Conn); ws/mux connections don't, and joinStreams
+// falls back to waiting for both directions instead of closing early.
+type closeWriter interface {
+	CloseWrite() error
+}
+
+// joinStreams pipes a<-brd and b<-ar concurrently. Each direction signals
+// EOF to its own destination as soon as its source is done (a proper TCP
+// half close on connections that support it, e.g. plain tcp/tls - a client
+// that half-closes after sending its request still sees the full response,
+// instead of having it cut off the instant its own side goes quiet). The
+// ws/mux transports have no equivalent mid-session half-close signal, so
+// once one direction finishes the other gets a bounded grace period to
+// finish naturally before both sides are closed - long enough for a normal
+// reply, short enough not to leak a session forever on one that never will.
 func joinStreams(a net.Conn, ar io.Reader, b net.Conn, brd io.Reader) {
 	done := make(chan struct{}, 2)
-	go func() { io.Copy(a, brd); done <- struct{}{} }()
-	go func() { io.Copy(b, ar); done <- struct{}{} }()
+	go func() {
+		io.Copy(a, brd)
+		if cw, ok := a.(closeWriter); ok {
+			cw.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		io.Copy(b, ar)
+		if cw, ok := b.(closeWriter); ok {
+			cw.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
 	<-done
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+	}
 	a.Close()
 	b.Close()
-	<-done
 }
 
 func genToken() string {
@@ -521,6 +571,10 @@ type Server struct {
 	pool     chan *dataConn
 	controls int64
 	mu       sync.Mutex
+
+	muxMu       sync.Mutex
+	muxSessions []*muxSession
+	muxRR       int
 }
 
 func (s *Server) log(format string, v ...interface{}) { log.Printf(format, v...) }
@@ -543,26 +597,40 @@ func (l nodelayListener) Accept() (net.Conn, error) {
 }
 
 func (s *Server) Run() error {
-	rawLn, err := net.Listen("tcp", s.cfg.Listen)
-	if err != nil {
-		return fmt.Errorf("cannot listen on %s: %w", s.cfg.Listen, err)
-	}
-	ln := net.Listener(nodelayListener{rawLn})
-	if s.cfg.Transport == "tls" || s.cfg.Transport == "wss" {
-		tc, err := tlsServerConfig(s.cfg.SNI)
+	var ln net.Listener
+	if s.cfg.Transport == "udp" {
+		kln, err := kcp.ListenWithOptions(s.cfg.Listen, nil, 0, 0)
 		if err != nil {
-			return err
+			return fmt.Errorf("cannot listen on %s: %w", s.cfg.Listen, err)
 		}
-		ln = tls.NewListener(ln, tc)
+		ln = kln
+	} else {
+		rawLn, err := net.Listen("tcp", s.cfg.Listen)
+		if err != nil {
+			return fmt.Errorf("cannot listen on %s: %w", s.cfg.Listen, err)
+		}
+		ln = net.Listener(nodelayListener{rawLn})
+		if s.cfg.Transport == "tls" || s.cfg.Transport == "wss" || s.cfg.Transport == "wssmux" {
+			tc, err := tlsServerConfig(s.cfg.SNI)
+			if err != nil {
+				return err
+			}
+			ln = tls.NewListener(ln, tc)
+		}
 	}
 	s.log("tunnel listening on %s (%s)", s.cfg.Listen, s.cfg.Transport)
 
+	mux := isMuxTransport(s.cfg.Transport)
 	for _, fw := range s.cfg.Forwards {
 		fw := fw
-		switch fw.Net {
-		case "tcp":
+		switch {
+		case fw.Net == "tcp" && mux:
+			go s.serveTCPForwardMux(fw)
+		case fw.Net == "tcp":
 			go s.serveTCPForward(fw)
-		case "udp":
+		case fw.Net == "udp" && mux:
+			go s.serveUDPForwardMux(fw)
+		case fw.Net == "udp":
 			go s.serveUDPForward(fw)
 		default:
 			s.log("skipping forward %s: unknown net %q", fw.Listen, fw.Net)
@@ -578,6 +646,9 @@ func (s *Server) Run() error {
 			}
 			return err
 		}
+		if sess, ok := c.(*kcp.UDPSession); ok {
+			tuneKCP(sess)
+		}
 		go s.acceptTunnel(c)
 	}
 }
@@ -587,7 +658,7 @@ func (s *Server) acceptTunnel(raw net.Conn) {
 	br := bufio.NewReaderSize(raw, 32*1024)
 	var conn net.Conn = raw
 
-	if s.cfg.Transport == "ws" || s.cfg.Transport == "wss" {
+	if s.cfg.Transport == "ws" || s.cfg.Transport == "wss" || s.cfg.Transport == "wsmux" || s.cfg.Transport == "wssmux" {
 		if err := serverUpgrade(raw, br, s.cfg.Path); err != nil {
 			if s.cfg.Verbose {
 				s.log("handshake from %s failed: %v", raw.RemoteAddr(), err)
@@ -630,6 +701,8 @@ func (s *Server) acceptTunnel(raw net.Conn) {
 		s.handleControl(f)
 	case "data":
 		s.parkData(f)
+	case "mux":
+		s.handleMux(f)
 	default:
 		raw.Close()
 	}
@@ -905,6 +978,14 @@ type Client struct {
 func (c *Client) log(format string, v ...interface{}) { log.Printf(format, v...) }
 
 func (c *Client) Run() error {
+	if isMuxTransport(c.cfg.Transport) {
+		c.log("connecting to %s (%s), mux_con=%d", c.cfg.Server, c.cfg.Transport, c.cfg.MuxCon)
+		for i := 0; i < c.cfg.MuxCon; i++ {
+			go c.muxWorker()
+			time.Sleep(50 * time.Millisecond)
+		}
+		select {} // run until the service is stopped
+	}
 	c.log("connecting to %s (%s), pool=%d", c.cfg.Server, c.cfg.Transport, c.cfg.Pool)
 	go c.controlLoop()
 	for i := 0; i < c.cfg.Pool; i++ {
@@ -915,18 +996,29 @@ func (c *Client) Run() error {
 }
 
 func (c *Client) connect(role string) (*fconn, error) {
-	raw, err := net.DialTimeout("tcp", c.cfg.Server, 15*time.Second)
-	if err != nil {
-		return nil, err
-	}
-	if tc, ok := raw.(*net.TCPConn); ok {
-		tc.SetKeepAlive(true)
-		tc.SetKeepAlivePeriod(30 * time.Second)
-		tc.SetNoDelay(true)
+	var raw net.Conn
+	if c.cfg.Transport == "udp" {
+		sess, err := kcp.DialWithOptions(c.cfg.Server, nil, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+		tuneKCP(sess)
+		raw = sess
+	} else {
+		tconn, err := net.DialTimeout("tcp", c.cfg.Server, 15*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		if tc, ok := tconn.(*net.TCPConn); ok {
+			tc.SetKeepAlive(true)
+			tc.SetKeepAlivePeriod(30 * time.Second)
+			tc.SetNoDelay(true)
+		}
+		raw = tconn
 	}
 	raw.SetDeadline(time.Now().Add(20 * time.Second))
 
-	if c.cfg.Transport == "tls" || c.cfg.Transport == "wss" {
+	if c.cfg.Transport == "tls" || c.cfg.Transport == "wss" || c.cfg.Transport == "wssmux" {
 		tconn := tls.Client(raw, &tls.Config{
 			ServerName: c.cfg.SNI,
 			// the tunnel is authenticated by the shared token; the certificate
@@ -944,7 +1036,7 @@ func (c *Client) connect(role string) (*fconn, error) {
 	br := bufio.NewReaderSize(raw, 32*1024)
 	var conn net.Conn = raw
 
-	if c.cfg.Transport == "ws" || c.cfg.Transport == "wss" {
+	if c.cfg.Transport == "ws" || c.cfg.Transport == "wss" || c.cfg.Transport == "wsmux" || c.cfg.Transport == "wssmux" {
 		if err := clientUpgrade(raw, br, c.cfg.SNI, c.cfg.Path); err != nil {
 			raw.Close()
 			return nil, err
@@ -1149,14 +1241,14 @@ loop:
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime)
 
-	cfgPath := flag.String("config", "/etc/bomalo/config.json", "path to the configuration file")
+	cfgPath := flag.String("config", "/etc/tifusi/config.json", "path to the configuration file")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	token := flag.Bool("gen-token", false, "print a fresh random token and exit")
 	check := flag.Bool("check", false, "validate the configuration and exit")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("bomalo %s\n", version)
+		fmt.Printf("tifusi %s\n", version)
 		return
 	}
 	if *token {
@@ -1174,7 +1266,7 @@ func main() {
 	}
 
 	fmt.Print(banner)
-	fmt.Printf("  Bomalo Tunnel %s  |  mode: %s  |  transport: %s\n\n", version, cfg.Mode, cfg.Transport)
+	fmt.Printf("  Tifusi Tunnel %s  |  mode: %s  |  transport: %s\n\n", version, cfg.Mode, cfg.Transport)
 
 	go func() {
 		sig := make(chan os.Signal, 1)
