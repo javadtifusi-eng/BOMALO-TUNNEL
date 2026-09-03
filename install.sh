@@ -484,14 +484,24 @@ add_forward() {
     case "$c" in
       1) add_entry "OpenVPN" udp 1194 ;;
       2) add_entry "OpenVPN" tcp 1194 ;;
-      3) add_entry "L2TP-IKE" udp 500; add_entry "L2TP-NATT" udp 4500
-         echo "   ${D}port 1701 is not forwarded on purpose - with IPsec enabled,${N}"
-         echo "   ${D}L2TP data travels inside the ESP/NAT-T flow on port 4500 and${N}"
-         echo "   ${D}is delivered locally by the kernel; forwarding 1701 directly${N}"
-         echo "   ${D}bypasses IPsec and confuses the session.${N}"
-         warn "this plain relay often fails to connect - IPsec needs a stable peer"
-         echo "   ${D}identity that a per-session relay can't give it. Use${N} ${W}Manage > WireGuard bridge${N} ${D}instead${N}"
-         echo "   ${D}for real kernel NAT and a working IPsec session.${N}" ;;
+      3) echo
+         echo "   ${W}Is IPsec actually configured on the foreign server for this?${N}"
+         echo "     ${R}1${N}) ${W}Yes${N}  ${D}strongSwan/IPsec is set up (standard, encrypted L2TP/IPsec)${N}"
+         echo "     ${R}2${N}) ${W}No${N}   ${D}plain L2TP only, no encryption - forwards port 1701 directly${N}"
+         local l2mode; read -r -p "  ${W}choice${N} [1]: " l2mode
+         if [ "$l2mode" = "2" ]; then
+           add_entry "L2TP" udp 1701
+           warn "plain L2TP has no encryption of its own - fine to get connected, not for real security"
+         else
+           add_entry "L2TP-IKE" udp 500; add_entry "L2TP-NATT" udp 4500
+           echo "   ${D}port 1701 is not forwarded on purpose - with IPsec enabled,${N}"
+           echo "   ${D}L2TP data travels inside the ESP/NAT-T flow on port 4500 and${N}"
+           echo "   ${D}is delivered locally by the kernel; forwarding 1701 directly${N}"
+           echo "   ${D}bypasses IPsec and confuses the session.${N}"
+           warn "this plain relay often fails to connect - IPsec needs a stable peer"
+           echo "   ${D}identity that a per-session relay can't give it. Use${N} ${W}Manage > WireGuard bridge${N} ${D}instead${N}"
+           echo "   ${D}for real kernel NAT and a working IPsec session.${N}"
+         fi ;;
       4) add_entry "IKEv2" udp 500; add_entry "IKEv2-NATT" udp 4500
          warn "this plain relay often fails to connect - IPsec needs a stable peer"
          echo "   ${D}identity that a per-session relay can't give it. Use${N} ${W}Manage > WireGuard bridge${N} ${D}instead${N}"
