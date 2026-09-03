@@ -1,47 +1,61 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 840" width="800" height="840" role="img" aria-label="Tifusi Tunnel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 820" width="800" height="820" role="img" aria-label="Tifusi Tunnel">
   <defs>
-    <radialGradient id="tt-glow" cx="50%" cy="42%" r="60%">
-      <stop offset="0%" stop-color="#221b13"/>
+    <radialGradient id="tt-glow" cx="50%" cy="36%" r="62%">
+      <stop offset="0%" stop-color="#1c1712"/>
       <stop offset="55%" stop-color="#0B0D10"/>
       <stop offset="100%" stop-color="#0B0D10"/>
     </radialGradient>
-    <radialGradient id="tt-core" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#9FF3EC"/>
-      <stop offset="100%" stop-color="#49C7BE"/>
-    </radialGradient>
   </defs>
 
-  <rect x="0" y="0" width="800" height="840" fill="url(#tt-glow)"/>
+  <rect x="0" y="0" width="800" height="820" fill="url(#tt-glow)"/>
 
-  <!-- tunnel: concentric rings receding to a lit core -->
-  <g fill="none" stroke="#49C7BE">
-    <circle cx="400" cy="372" r="98" stroke-width="2" stroke-opacity="0.5"/>
-    <circle cx="400" cy="372" r="75" stroke-width="2.5" stroke-opacity="0.68"/>
-    <circle cx="400" cy="372" r="52" stroke-width="3" stroke-opacity="0.85"/>
-  </g>
-  <circle cx="400" cy="372" r="29" fill="none" stroke="#F4EEE2" stroke-width="3.5"/>
-  <circle cx="400" cy="372" r="7" fill="url(#tt-core)"/>
+  <!-- double-headed Persepolis capital -->
+  <g fill="none" stroke="#F4EEE2" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
 
-  <!-- shield -->
-  <path d="M400 182 C470 182 528 201 561 234 C570 296 561 396 524 474 C495 537 448 582 400 614 C352 582 305 537 276 474 C239 396 230 296 239 234 C272 201 330 182 400 182 Z"
-        fill="none" stroke="#F4EEE2" stroke-width="6" stroke-linejoin="round"/>
+    <!-- right head + neck, smooth silhouette -->
+    <path d="M400,320
+             C415,270 450,230 490,210
+             C520,195 555,192 575,205
+             C565,180 545,168 515,165
+             C480,175 430,230 400,320 Z"/>
+    <!-- ear -->
+    <path d="M505,168 L522,135 L512,162"/>
+    <!-- eye -->
+    <circle cx="540" cy="190" r="4" fill="#F4EEE2" stroke="none"/>
+    <!-- mane ticks -->
+    <path d="M470,195 L485,178 M445,225 L462,210 M422,255 L440,242 M405,285 L425,275" stroke-width="3.5"/>
+    <!-- front leg -->
+    <path d="M414,300 L406,352 L424,374 L410,422 L428,442"/>
 
-  <!-- right volute + feather sweep (Persepolis-capital-inspired scroll) -->
-  <g stroke="#C9A063" stroke-width="4.5" fill="none" stroke-linecap="round">
-    <path d="M460 216 C500 194 540 199 558 174 C572 154 566 126 542 116 C522 108 505 120 506 136 C507 146 516 152 526 148"/>
-    <path d="M452 220 C500 234 545 246 578 262"/>
-    <path d="M446 238 C492 256 533 274 562 296"/>
-    <path d="M438 258 C480 280 516 302 540 328"/>
-  </g>
-  <!-- mirrored left volute + feather sweep -->
-  <g stroke="#C9A063" stroke-width="4.5" fill="none" stroke-linecap="round" transform="translate(800,0) scale(-1,1)">
-    <path d="M460 216 C500 194 540 199 558 174 C572 154 566 126 542 116 C522 108 505 120 506 136 C507 146 516 152 526 148"/>
-    <path d="M452 220 C500 234 545 246 578 262"/>
-    <path d="M446 238 C492 256 533 274 562 296"/>
-    <path d="M438 258 C480 280 516 302 540 328"/>
+    <!-- mirrored left head + neck + leg -->
+    <g transform="translate(800,0) scale(-1,1)">
+      <path d="M400,320
+               C415,270 450,230 490,210
+               C520,195 555,192 575,205
+               C565,180 545,168 515,165
+               C480,175 430,230 400,320 Z"/>
+      <path d="M505,168 L522,135 L512,162"/>
+      <circle cx="540" cy="190" r="4" fill="#F4EEE2" stroke="none"/>
+      <path d="M470,195 L485,178 M445,225 L462,210 M422,255 L440,242 M405,285 L425,275" stroke-width="3.5"/>
+      <path d="M414,300 L406,352 L424,374 L410,422 L428,442"/>
+    </g>
+
+    <!-- saddle beam where the two necks meet -->
+    <path d="M370,320 L430,320"/>
+
+    <!-- capital block -->
+    <path d="M330,320 L470,320 L446,372 L354,372 Z"/>
+
+    <!-- fluted column -->
+    <path d="M362,372 L438,372 L420,620 L380,620 Z"/>
+    <path d="M378,384 L366,610 M394,384 L390,612 M406,384 L410,612 M422,384 L434,610"
+          stroke-width="2.5"/>
+
+    <!-- base -->
+    <path d="M366,620 L434,620 L440,648 L360,648 Z"/>
   </g>
 
   <!-- wordmark -->
-  <text x="400" y="678" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="64" letter-spacing="6" fill="#F4EEE2">TIFUSI TUNNEL</text>
-  <text x="400" y="716" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="19" letter-spacing="5" fill="#8D93A0">REVERSE TUNNEL &#183; CLIENT-INITIATED</text>
+  <text x="400" y="726" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="62" letter-spacing="6" fill="#F4EEE2">TIFUSI TUNNEL</text>
+  <text x="400" y="762" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="18" letter-spacing="5" fill="#8D93A0">REVERSE TUNNEL &#183; CLIENT-INITIATED</text>
 </svg>
