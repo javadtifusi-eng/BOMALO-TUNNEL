@@ -21,10 +21,15 @@ GO_MIN=1.21
 # palette: text is white, numbers are red, only "running" is green
 W=$'\e[97m'; R=$'\e[91m'; G=$'\e[92m'; BL=$'\e[94m'; C=$'\e[96m'; D=$'\e[90m'; N=$'\e[0m'; BD=$'\e[1m'
 
-info() { echo "${W}==>${N} ${W}$*${N}"; }
-ok()   { echo "${G} ok ${N} ${W}$*${N}"; }
-warn() { echo "${R} !! ${N} ${W}$*${N}"; }
-die()  { echo "${R}fail${N} ${W}$*${N}"; exit 1; }
+# All four of these are status/log output for the user, never a value a
+# caller should capture - printed to stderr so a caller that reads a
+# result via "x=$(some_func)" (ask/ask_required in particular, which call
+# warn() while re-prompting) can never have this text accidentally mixed
+# into the captured value.
+info() { echo "${W}==>${N} ${W}$*${N}" >&2; }
+ok()   { echo "${G} ok ${N} ${W}$*${N}" >&2; }
+warn() { echo "${R} !! ${N} ${W}$*${N}" >&2; }
+die()  { echo "${R}fail${N} ${W}$*${N}" >&2; exit 1; }
 
 cols() { local c; c=$(tput cols 2>/dev/null || echo 80); [ -n "$c" ] && echo "$c" || echo 80; }
 
