@@ -15,6 +15,13 @@
 </p>
 
 <p align="center">
+  <a href="https://goreportcard.com/report/github.com/javadtifusi-eng/Tifusi-Tunnel"><img src="https://goreportcard.com/badge/github.com/javadtifusi-eng/Tifusi-Tunnel?style=flat-square"></a>
+  <img src="https://img.shields.io/badge/platforms-amd64%20%7C%20arm64%20%7C%20armv6l-333333?style=flat-square">
+  <img src="https://img.shields.io/github/stars/javadtifusi-eng/Tifusi-Tunnel?style=flat-square&color=f5a623">
+  <img src="https://img.shields.io/github/last-commit/javadtifusi-eng/Tifusi-Tunnel?style=flat-square">
+</p>
+
+<p align="center">
   <a href="#english">🇬🇧 English</a> &nbsp;/&nbsp; <a href="#persian"><img src="assets/flag-ir.png" width="22" height="22"> فارسی</a> &nbsp;/&nbsp; <a href="#russian">🇷🇺 Русский</a>
 </p>
 
