@@ -286,25 +286,54 @@ ask() {
   else read -r -p "  ${W}$p${N}: " a; echo "$a"; fi
 }
 
+# ask_required is like ask() with no default - it re-prompts (with a
+# warning) until something is actually typed, instead of letting an empty
+# Enter silently fall back to a canned value.
+ask_required() {
+  local p="$1" a
+  a=$(ask "$p" "")
+  while [ -z "$a" ]; do
+    warn "this can't be left empty"
+    a=$(ask "$p" "")
+  done
+  echo "$a"
+}
+
+# pick_transport asks in two steps - first the transport FAMILY (tcp/tls/
+# ws/wss/udp), then, only for families that actually have a multiplexed
+# sibling (tcp, ws, wss - not tls or udp), whether to use it. This keeps
+# unrelated transports (udp is not "in the same branch" as tcp) from being
+# mixed into one flat numbered list.
 pick_transport() {
+  local fam
   {
     echo
-    echo "  ${W}${BD}Transport:${N}"
-    echo "    ${R}1${N}) ${W}tls${N}      TLS with a self-signed certificate"
-    echo "    ${R}2${N}) ${W}wss${N}      HTTP/WebSocket upgrade inside TLS  ${D}(best against DPI)${N}"
-    echo "    ${R}3${N}) ${W}ws${N}       plain HTTP/WebSocket upgrade"
-    echo "    ${R}4${N}) ${W}tcp${N}      raw TCP, fastest, no disguise"
-    echo "    ${R}5${N}) ${W}wssmux${N}   like wss, multiplexed  ${D}(fewer sockets under many sessions)${N}"
-    echo "    ${R}6${N}) ${W}wsmux${N}    like ws, multiplexed"
-    echo "    ${R}7${N}) ${W}tcpmux${N}   like tcp, multiplexed"
-    echo "    ${R}8${N}) ${W}udp${N}      raw UDP (KCP)  ${D}fast, no TLS, good on lossy links${N}"
+    echo "  ${W}${BD}Transport family:${N}"
+    echo "    ${R}1${N}) ${W}tcp${N}   raw, fastest, no disguise"
+    echo "    ${R}2${N}) ${W}tls${N}   TLS with a self-signed certificate"
+    echo "    ${R}3${N}) ${W}ws${N}    HTTP/WebSocket upgrade"
+    echo "    ${R}4${N}) ${W}wss${N}   WebSocket inside TLS  ${D}(best against DPI)${N}"
+    echo "    ${R}5${N}) ${W}udp${N}   raw UDP (KCP)  ${D}fast, no disguise, good on lossy links${N}"
   } >&2
   local c; read -r -p "  ${W}choice${N} [1]: " c
   case "${c:-1}" in
-    2) echo wss ;; 3) echo ws ;; 4) echo tcp ;;
-    5) echo wssmux ;; 6) echo wsmux ;; 7) echo tcpmux ;;
-    8) echo udp ;;
-    *) echo tls ;;
+    2) fam=tls ;; 3) fam=ws ;; 4) fam=wss ;; 5) fam=udp ;; *) fam=tcp ;;
+  esac
+
+  case "$fam" in
+    tls|udp) echo "$fam"; return ;;
+  esac
+
+  {
+    echo
+    echo "  ${W}${BD}$fam variant:${N}"
+    echo "    ${R}1${N}) ${W}$fam${N}      plain"
+    echo "    ${R}2${N}) ${W}${fam}mux${N}   multiplexed  ${D}(fewer sockets under many sessions)${N}"
+  } >&2
+  local v; read -r -p "  ${W}choice${N} [1]: " v
+  case "$v" in
+    2) echo "${fam}mux" ;;
+    *) echo "$fam" ;;
   esac
 }
 
@@ -347,13 +376,9 @@ setup_server() {
     [[ "$use_cdn" =~ ^[Yy]$ ]] && arvan_hint
   fi
   if [[ "$use_cdn" =~ ^[Yy]$ ]]; then
-    sni=$(ask "Your ArvanCloud domain (used as SNI - not a fake one)" "")
-    while [ -z "$sni" ]; do
-      warn "a real domain is required when fronting through a CDN"
-      sni=$(ask "Your ArvanCloud domain (used as SNI - not a fake one)" "")
-    done
+    sni=$(ask_required "Your ArvanCloud domain (used as SNI - not a fake one)")
   else
-    sni=$(ask "SNI / fake hostname" "www.bing.com")
+    sni=$(ask_required "SNI / hostname to disguise as (e.g. a real site's domain)")
   fi
   path=$(ask "HTTP path (ws/wss only)" "/tunnel")
 
@@ -387,7 +412,7 @@ setup_client() {
   token=$(ask "Shared token (from the Iran server)" "")
   [ -z "$token" ] && { warn "token is required"; return; }
   transport=$(pick_transport)
-  sni=$(ask "SNI (must match the Iran server)" "www.bing.com")
+  sni=$(ask_required "SNI (must match the Iran server, exactly)")
   path=$(ask "HTTP path (ws/wss only)" "/tunnel")
   pool=$(ask "Warm connections to keep open (plain transports) / physical mux links (tcpmux, wsmux, wssmux)" 8)
 
@@ -524,7 +549,7 @@ edit_settings() {
     case "$c" in
       1) v=$(pick_transport); set_field transport "$v"; pause ;;
       2) v=$(ask "new token" ""); [ -n "$v" ] && set_field token "$v"; pause ;;
-      3) v=$(ask "new SNI" "www.bing.com"); set_field sni "$v"; pause ;;
+      3) v=$(ask_required "new SNI"); set_field sni "$v"; pause ;;
       4) v=$(ask "new path" "/tunnel"); set_field path "$v"; pause ;;
       5) if [ "$mode" = server ]; then
            v=$(ask "new tunnel port" 8443); set_field listen "0.0.0.0:$v"; open_port "$v" tcp
@@ -558,6 +583,63 @@ show_status() {
   else
     warn "no configuration at $CFG"
   fi
+}
+
+# test_connection checks the things that actually determine whether the
+# tunnel is working, instead of just "is the process running": whether the
+# tunnel port is bound (server) or reachable (client), and what the most
+# recent connection-state log line says.
+test_connection() {
+  step "Test tunnel connection"
+  [ -f "$CFG" ] || { warn "no configuration yet"; return; }
+
+  if systemctl is-active --quiet tifusi; then
+    ok "service is running"
+  else
+    warn "service is not running - nothing to test, check Manage > Status"
+    return
+  fi
+
+  local mode transport last
+  mode=$(jq -r .mode "$CFG")
+  transport=$(jq -r .transport "$CFG")
+  last=$(journalctl -u tifusi -n 300 --no-pager 2>/dev/null \
+         | grep -E "client connected from|client .* disconnected|control link established|control link lost" \
+         | tail -1)
+
+  if [ "$mode" = server ]; then
+    local port; port=$(jq -r '.listen' "$CFG" | sed 's/.*://')
+    if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":$port "; then
+      ok "tunnel port $port is listening (tcp)"
+    elif command -v ss >/dev/null 2>&1 && ss -lun 2>/dev/null | grep -q ":$port "; then
+      ok "tunnel port $port is listening (udp)"
+    else
+      warn "tunnel port $port does not look like it's listening"
+    fi
+    case "$last" in
+      *"client connected"*) ok "a foreign server is connected" ;;
+      *"disconnected"*) warn "the last foreign server disconnected - waiting for it to reconnect" ;;
+      *) warn "no foreign server has connected yet - check it's running with the same token/transport/SNI/path" ;;
+    esac
+  else
+    local server="${transport}" ip port
+    server=$(jq -r .server "$CFG")
+    ip="${server%%:*}"; port="${server##*:}"
+    if (exec 3<>"/dev/tcp/$ip/$port") 2>/dev/null; then
+      ok "reachable: opened a TCP connection to $ip:$port"
+      exec 3<&- 3>&- 2>/dev/null
+    elif [ "$transport" = udp ]; then
+      echo "   ${D}TCP probe skipped - transport is udp, that's expected${N}"
+    else
+      warn "could not open a TCP connection to $ip:$port - check the Iran server and its firewall"
+    fi
+    case "$last" in
+      *"control link established"*) ok "control link is established with the Iran server" ;;
+      *"control link lost"*) warn "control link was lost and is reconnecting" ;;
+      *) warn "no confirmed control link yet - check the logs (Manage > Live logs)" ;;
+    esac
+  fi
+  [ -n "$last" ] && echo "   ${D}last activity: $last${N}"
 }
 
 write_cron() {
@@ -815,7 +897,10 @@ menu() {
     echo "   ${R}${BD}3${N}) ${W}${BD}Set up as FOREIGN side${N}   ${D}(client)${N}"
     echo "   ${R}${BD}4${N}) ${W}${BD}Add forwarded ports${N}      ${D}(Iran)${N}"
     echo "   ${R}${BD}5${N}) ${W}${BD}Remove a forwarded port${N}  ${D}(Iran)${N}"
-    echo "   ${R}${BD}6${N}) ${W}${BD}Manage${N}"
+    echo "   ${R}${BD}6${N}) ${W}${BD}Test tunnel connection${N}"
+    echo "   ${R}${BD}7${N}) ${W}${BD}Restart service${N}"
+    echo "   ${R}${BD}8${N}) ${W}${BD}Manage${N}"
+    echo "   ${R}${BD}9${N}) ${W}${BD}Uninstall${N}"
     echo "   ${R}${BD}0${N}) ${W}${BD}Exit${N}"
     echo
     local c; read -r -p "  ${W}choice:${N} " c
@@ -825,7 +910,10 @@ menu() {
       3) [ -x "$BIN" ] || install_binary; setup_client; pause ;;
       4) add_forward; restart_service; pause ;;
       5) del_forward; restart_service; pause ;;
-      6) manage ;;
+      6) test_connection; pause ;;
+      7) step "Restart service"; restart_service; pause ;;
+      8) manage ;;
+      9) uninstall; pause ;;
       0) clear 2>/dev/null; exit 0 ;;
       *) warn "invalid choice"; sleep 1 ;;
     esac
