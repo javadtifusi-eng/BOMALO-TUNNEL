@@ -275,13 +275,20 @@ pick_transport() {
   {
     echo
     echo "  ${W}Transport:${N}"
-    echo "    ${R}1${N}) ${W}tls${N}   TLS with a self-signed certificate"
-    echo "    ${R}2${N}) ${W}wss${N}   HTTP/WebSocket upgrade inside TLS  ${D}(best against DPI)${N}"
-    echo "    ${R}3${N}) ${W}ws${N}    plain HTTP/WebSocket upgrade"
-    echo "    ${R}4${N}) ${W}tcp${N}   raw TCP, fastest, no disguise"
+    echo "    ${R}1${N}) ${W}tls${N}      TLS with a self-signed certificate"
+    echo "    ${R}2${N}) ${W}wss${N}      HTTP/WebSocket upgrade inside TLS  ${D}(best against DPI)${N}"
+    echo "    ${R}3${N}) ${W}ws${N}       plain HTTP/WebSocket upgrade"
+    echo "    ${R}4${N}) ${W}tcp${N}      raw TCP, fastest, no disguise"
+    echo "    ${R}5${N}) ${W}wssmux${N}   like wss, multiplexed  ${D}(fewer sockets under many sessions)${N}"
+    echo "    ${R}6${N}) ${W}wsmux${N}    like ws, multiplexed"
+    echo "    ${R}7${N}) ${W}tcpmux${N}   like tcp, multiplexed"
   } >&2
   local c; read -r -p "  ${W}choice${N} [1]: " c
-  case "${c:-1}" in 2) echo wss ;; 3) echo ws ;; 4) echo tcp ;; *) echo tls ;; esac
+  case "${c:-1}" in
+    2) echo wss ;; 3) echo ws ;; 4) echo tcp ;;
+    5) echo wssmux ;; 6) echo wsmux ;; 7) echo tcpmux ;;
+    *) echo tls ;;
+  esac
 }
 
 # ------------------------------------------------------------------ setup
@@ -330,11 +337,11 @@ setup_client() {
   transport=$(pick_transport)
   sni=$(ask "SNI (must match the Iran server)" "www.bing.com")
   path=$(ask "HTTP path (ws/wss only)" "/tunnel")
-  pool=$(ask "Warm connections to keep open" 8)
+  pool=$(ask "Warm connections to keep open (plain transports) / physical mux links (tcpmux, wsmux, wssmux)" 8)
 
   cfg=$(jq -n --arg s "$ip:$port" --arg t "$transport" --arg tok "$token" \
               --arg sn "$sni" --arg p "$path" --argjson pool "$pool" \
-        '{mode:"client", server:$s, transport:$t, token:$tok, sni:$sn, path:$p, pool:$pool}')
+        '{mode:"client", server:$s, transport:$t, token:$tok, sni:$sn, path:$p, pool:$pool, mux_con:$pool}')
   save_cfg "$cfg"
   ok "client configured"
   echo "  ${D}Ports are chosen on the Iran side; this machine only dials out.${N}"
@@ -439,18 +446,19 @@ edit_settings() {
       echo "    listen    : ${W}$(jq -r .listen "$CFG")${N}"
     else
       echo "    server    : ${W}$(jq -r .server "$CFG")${N}"
-      echo "    pool      : ${W}$(jq -r .pool "$CFG")${N}"
+      echo "    pool      : ${W}$(jq -r .pool "$CFG")${N}  ${D}(plain transports)${N}"
+      echo "    mux_con   : ${W}$(jq -r '.mux_con // 8' "$CFG")${N}  ${D}(tcpmux/wsmux/wssmux)${N}"
     fi
     echo
-    echo "   ${R}1${N}) ${W}transport${N}    ${D}tcp / tls / ws / wss${N}"
+    echo "   ${R}1${N}) ${W}transport${N}    ${D}tcp/tls/ws/wss/tcpmux/wsmux/wssmux${N}"
     echo "   ${R}2${N}) ${W}token${N}        ${D}shared secret - must match on both servers${N}"
-    echo "   ${R}3${N}) ${W}SNI${N}          ${D}fake hostname for tls/ws/wss${N}"
-    echo "   ${R}4${N}) ${W}path${N}         ${D}HTTP path for ws/wss${N}"
+    echo "   ${R}3${N}) ${W}SNI${N}          ${D}fake hostname for tls/ws/wss and their mux variants${N}"
+    echo "   ${R}4${N}) ${W}path${N}         ${D}HTTP path for ws/wss and their mux variants${N}"
     if [ "$mode" = server ]; then
       echo "   ${R}5${N}) ${W}tunnel port${N}  ${D}what the foreign server dials${N}"
     else
       echo "   ${R}5${N}) ${W}Iran ip:port${N} ${D}where this client connects${N}"
-      echo "   ${R}6${N}) ${W}pool${N}         ${D}warm connections kept open${N}"
+      echo "   ${R}6${N}) ${W}pool / mux_con${N}  ${D}warm connections / physical mux links${N}"
     fi
     echo "   ${R}7${N}) ${W}Performance preset${N}  ${D}BBR + buffer tuning${N}"
     echo "   ${R}0${N}) ${W}back${N}"
@@ -466,8 +474,8 @@ edit_settings() {
            v=$(ask "Iran server ip:port" "$(jq -r .server "$CFG")"); set_field server "$v"
          fi ;;
       6) [ "$mode" = client ] || { warn "client only"; continue; }
-         v=$(ask "warm connections" 8)
-         tmp=$(jq --argjson p "$v" '.pool=$p' "$CFG") && echo "$tmp" | jq . > "$CFG" && ok "pool = $v" ;;
+         v=$(ask "warm connections / mux links" 8)
+         tmp=$(jq --argjson p "$v" '.pool=$p | .mux_con=$p' "$CFG") && echo "$tmp" | jq . > "$CFG" && ok "pool = mux_con = $v" ;;
       7) performance ;;
       0) break ;;
       *) warn "invalid choice" ;;
