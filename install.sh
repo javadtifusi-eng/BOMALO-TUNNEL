@@ -117,7 +117,7 @@ arch_tag() {
     x86_64|amd64)  echo amd64 ;;
     aarch64|arm64) echo arm64 ;;
     armv7l)        echo armv6l ;;
-    *) die "unsupported architecture: $(uname -m)" ;;
+    *) return 1 ;;
   esac
 }
 
@@ -144,7 +144,7 @@ ensure_go() {
   local ver a url
   ver=$(curl -fsSL --max-time 10 "https://go.dev/VERSION?m=text" 2>/dev/null | head -1 | tr -d '[:space:]')
   [ -z "$ver" ] && ver="go1.22.5"
-  a=$(arch_tag)
+  a=$(arch_tag) || die "unsupported architecture: $(uname -m)"
 
   for url in "https://go.dev/dl/${ver}.linux-${a}.tar.gz" \
              "https://dl.google.com/go/${ver}.linux-${a}.tar.gz"; do
@@ -209,7 +209,7 @@ install_shortcut() {
 install_binary() {
   step "Install / update the binary"
   stop_legacy
-  local a; a=$(arch_tag)
+  local a; a=$(arch_tag) || die "unsupported architecture: $(uname -m)"
   info "looking for a prebuilt binary"
   if curl -fsSL "${RELEASE}/tifusi-linux-${a}" -o /tmp/tifusi 2>/dev/null && [ -s /tmp/tifusi ]; then
     install -m 0755 /tmp/tifusi "$BIN"; rm -f /tmp/tifusi
@@ -439,8 +439,14 @@ add_forward() {
          echo "   ${D}port 1701 is not forwarded on purpose - with IPsec enabled,${N}"
          echo "   ${D}L2TP data travels inside the ESP/NAT-T flow on port 4500 and${N}"
          echo "   ${D}is delivered locally by the kernel; forwarding 1701 directly${N}"
-         echo "   ${D}bypasses IPsec and confuses the session.${N}" ;;
-      4) add_entry "IKEv2" udp 500; add_entry "IKEv2-NATT" udp 4500 ;;
+         echo "   ${D}bypasses IPsec and confuses the session.${N}"
+         warn "this plain relay often fails to connect - IPsec needs a stable peer"
+         echo "   ${D}identity that a per-session relay can't give it. Use${N} ${W}Manage > WireGuard bridge${N} ${D}instead${N}"
+         echo "   ${D}for real kernel NAT and a working IPsec session.${N}" ;;
+      4) add_entry "IKEv2" udp 500; add_entry "IKEv2-NATT" udp 4500
+         warn "this plain relay often fails to connect - IPsec needs a stable peer"
+         echo "   ${D}identity that a per-session relay can't give it. Use${N} ${W}Manage > WireGuard bridge${N} ${D}instead${N}"
+         echo "   ${D}for real kernel NAT and a working IPsec session.${N}" ;;
       5) add_entry "WireGuard" udp 51820 ;;
       6) add_entry "VLESS" tcp 443 ;;
       7) add_entry "vpn-ui" tcp 8081 ;;
@@ -613,7 +619,11 @@ setup_wg_bridge() {
   echo "   ${R}2${N}) ${W}This is the FOREIGN side${N}"
   echo "   ${R}0${N}) ${W}back${N}"
   local role; read -r -p "  ${W}choice:${N} " role
-  [ "$role" = 0 ] || [ -z "$role" ] && return
+  case "$role" in
+    0|"") return ;;
+    1|2) ;;
+    *) warn "invalid choice"; return ;;
+  esac
 
   local my_ip peer_pub peer_ip peer_endpoint port
   port=$(ask "WireGuard port (must match on both servers)" "$WG_PORT_DEFAULT")

@@ -52,17 +52,30 @@ Then:
 | Service | Ports | Works |
 |---|---|---|
 | OpenVPN | TCP or UDP 1194 | yes |
-| L2TP/IPsec | UDP 500, 4500, 1701 | yes, over NAT-T |
-| IKEv2 | UDP 500, 4500 | yes, over NAT-T |
+| L2TP/IPsec | UDP 500, 4500, 1701 | see below — plain forward is unreliable, use the WireGuard bridge |
+| IKEv2 | UDP 500, 4500 | see below — plain forward is unreliable, use the WireGuard bridge |
 | WireGuard | UDP 51820 | yes |
 | VLESS / VMess / Trojan / Xray | TCP 443 etc. | yes |
 | vpn-ui panel | TCP 8081 | yes |
 | SSH, HTTP, any TCP service | any | yes |
 
-Both TCP and UDP are carried. Because the relay rewrites addresses, IPsec peers
-detect a NAT between them and switch to NAT-T automatically, so ESP travels
-inside UDP 4500. Bare ESP (IP protocol 50) is *not* forwarded — that is a
-property of any userspace relay, not a bug.
+Both TCP and UDP are carried. Bare ESP (IP protocol 50) is *not* forwarded —
+that is a property of any userspace relay, not a bug.
+
+### Why L2TP/IPsec and IKEv2 need the WireGuard bridge, not a plain forward
+
+The plain relay opens an independent connection per forwarded port. IPsec
+needs the peer's identity (source IP) to stay the same across ports 500 and
+4500 to recognize one session — the plain relay can't guarantee that, so
+adding `500`/`4500` as ordinary forwards will often fail to connect, or
+connect unreliably. The fix is the built-in **WireGuard bridge**
+(`bm` → `Manage` → `WireGuard bridge`): a private server-to-server link that
+lets the Iran server do real kernel NAT for these two ports — exactly like a
+home router forwarding a port — which keeps the peer identity IPsec expects.
+Set it up on the foreign side first (to get its public key), then the Iran
+side (answer `Y` to routing L2TP/IPsec through the bridge — this also removes
+any old 500/4500 forwards automatically), then finish the foreign side with
+the Iran server's public key. `bm`'s prompts walk through it in order.
 
 > Important: the port a service really listens on is not always the port shown
 > in an exported config. vpn-ui, for example, serves OpenVPN on **1194**
@@ -354,12 +367,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/javadtifusi-eng/Tifusi-Tunne
 ## Поддержка протоколов
 
 OpenVPN (TCP/UDP), L2TP/IPsec, IKEv2, WireGuard, VLESS/VMess/Trojan, панель
-vpn-ui и любой другой TCP-сервис. Передаются как TCP, так и UDP.
+vpn-ui и любой другой TCP-сервис. Передаются как TCP, так и UDP. Чистый ESP
+(IP-протокол 50) *не* передаётся — это ограничение любого пользовательского
+релея, а не баг.
 
-Поскольку релей переписывает адреса, обе стороны IPsec обнаруживают между
-собой NAT и автоматически переключаются на NAT-T — то есть ESP идёт внутри
-UDP 4500. Чистый ESP (IP-протокол 50) *не* передаётся — это ограничение
-любого пользовательского релея, а не баг.
+### Почему L2TP/IPsec и IKEv2 нужен мост WireGuard, а не обычный форвард
+
+Обычный релей открывает независимое соединение на каждый проброшенный порт.
+IPsec требует, чтобы адрес источника оставался одним и тем же между портами
+500 и 4500 для распознавания одной сессии — обычный релей этого не
+гарантирует, поэтому проброс 500/4500 как обычных портов часто не подключается
+или работает нестабильно. Решение — встроенный **мост WireGuard**
+(`bm` → `Manage` → `WireGuard bridge`): приватная связь сервер-сервер,
+позволяющая иранскому серверу делать настоящий NAT на уровне ядра для этих
+двух портов — точно как проброс порта на домашнем роутере — что и сохраняет
+идентичность, которую ожидает IPsec.
 
 > Важно: порт, на котором сервис реально слушает, не всегда совпадает с
 > портом, указанным в экспортированном конфиге. Например, vpn-ui поднимает

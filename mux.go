@@ -91,6 +91,14 @@ func (ms *muxSession) isClosed() bool { return atomic.LoadInt32(&ms.dead) == 1 }
 func (ms *muxSession) serve(isServer bool, dial func(id uint32, req dialReq)) {
 	defer ms.teardown()
 	for {
+		// Without a read deadline, a physical connection that goes dark
+		// without an RST/FIN (a dropped NAT mapping, a sleeping client,
+		// a black-holed network path) would sit in serve() forever - the
+		// session would never be marked dead, stay in the round-robin
+		// pool, and every request routed to it would stall for the full
+		// OpenStream timeout. Heartbeat pings every 15s, so a few missed
+		// round trips is a reliable dead-peer signal.
+		ms.f.SetReadDeadline(time.Now().Add(60 * time.Second))
 		t, p, err := ms.f.recv()
 		if err != nil {
 			return
@@ -471,6 +479,7 @@ func (s *Server) serveUDPForwardMux(fw Forward) {
 	for {
 		n, addr, err := pc.ReadFrom(buf)
 		if err != nil {
+			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 		key := addr.String()
@@ -493,7 +502,12 @@ func (s *Server) serveUDPForwardMux(fw Forward) {
 				defer func() {
 					sess.st.Close()
 					mu.Lock()
-					delete(sessions, key)
+					// Only remove the entry if it's still this session - a
+					// fresh session may already have replaced it under the
+					// same key while this goroutine was winding down.
+					if sessions[key] == sess {
+						delete(sessions, key)
+					}
 					mu.Unlock()
 				}()
 				for {
@@ -517,7 +531,9 @@ func (s *Server) serveUDPForwardMux(fw Forward) {
 		if err := sess.st.sendFrame(buf[:n]); err != nil {
 			sess.st.Close()
 			mu.Lock()
-			delete(sessions, key)
+			if sessions[key] == sess {
+				delete(sessions, key)
+			}
 			mu.Unlock()
 		}
 	}

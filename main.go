@@ -226,14 +226,14 @@ func tlsServerConfig(sni string) (*tls.Config, error) {
 		return nil, err
 	}
 	tmpl := x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: sni, Organization: []string{"Cloud Services"}},
-		DNSNames:     []string{sni},
-		NotBefore:    time.Now().Add(-24 * time.Hour),
-		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IsCA:         true,
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: sni, Organization: []string{"Cloud Services"}},
+		DNSNames:              []string{sni},
+		NotBefore:             time.Now().Add(-24 * time.Hour),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IsCA:                  true,
 		BasicConstraintsValid: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
@@ -592,6 +592,14 @@ func (l nodelayListener) Accept() (net.Conn, error) {
 	}
 	if tc, ok := c.(*net.TCPConn); ok {
 		tc.SetNoDelay(true)
+		// Without this, a peer that goes dark without an RST/FIN (a dropped
+		// NAT mapping, a sleeping client) never surfaces as a socket error
+		// on this side - the client already enables keepalive for the
+		// connections it dials, so accepted connections get the same
+		// dead-peer detection instead of only relying on the tunnel's own
+		// application-level ping/pong.
+		tc.SetKeepAlive(true)
+		tc.SetKeepAlivePeriod(30 * time.Second)
 	}
 	return c, nil
 }
@@ -906,6 +914,7 @@ func (s *Server) serveUDPForward(fw Forward) {
 	for {
 		n, addr, err := pc.ReadFrom(buf)
 		if err != nil {
+			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 		key := addr.String()
@@ -928,7 +937,12 @@ func (s *Server) serveUDPForward(fw Forward) {
 				defer func() {
 					sess.f.Close()
 					mu.Lock()
-					delete(sessions, key)
+					// Only remove the entry if it's still this session - a
+					// fresh session may already have replaced it under the
+					// same key while this goroutine was winding down.
+					if sessions[key] == sess {
+						delete(sessions, key)
+					}
 					mu.Unlock()
 				}()
 				for {
@@ -956,7 +970,9 @@ func (s *Server) serveUDPForward(fw Forward) {
 		if err := sess.f.send(frmUDP, buf[:n]); err != nil {
 			sess.f.Close()
 			mu.Lock()
-			delete(sessions, key)
+			if sessions[key] == sess {
+				delete(sessions, key)
+			}
 			mu.Unlock()
 		}
 	}
