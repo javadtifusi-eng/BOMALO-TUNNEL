@@ -617,6 +617,30 @@ func isLocalIP(ip net.IP) bool {
 	return false
 }
 
+// distinctLocalAddr picks a source address different from target for a
+// self-dial (see handleUDP). A real, non-loopback interface address is
+// preferred when one is available - some kernel-processed protocols
+// (IPsec/XFRM in particular) can fail to deliver return traffic that was
+// generated and re-encrypted entirely on the loopback interface, even
+// once source and destination addresses no longer collide. Falling back
+// to a second loopback address keeps this working on boxes with only
+// 127.0.0.1 configured.
+func distinctLocalAddr(target net.IP) net.IP {
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok || ipn.IP.To4() == nil || ipn.IP.IsLoopback() || ipn.IP.Equal(target) {
+				continue
+			}
+			return ipn.IP
+		}
+	}
+	if target.Equal(net.ParseIP("127.0.0.1")) {
+		return net.ParseIP("127.0.0.2")
+	}
+	return net.ParseIP("127.0.0.1")
+}
+
 func hostOf(addr string) string {
 	h, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -1289,11 +1313,7 @@ func (c *Client) handleUDP(f *fconn, req dialReq) {
 	// without touching genuinely remote forwards.
 	if host, _, err := net.SplitHostPort(req.Target); err == nil {
 		if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || isLocalIP(ip)) {
-			local := "127.0.0.1"
-			if ip.String() == local {
-				local = "127.0.0.2"
-			}
-			d.LocalAddr = &net.UDPAddr{IP: net.ParseIP(local)}
+			d.LocalAddr = &net.UDPAddr{IP: distinctLocalAddr(ip)}
 		}
 	}
 	target, err := d.Dial("udp", req.Target)
