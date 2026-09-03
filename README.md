@@ -102,6 +102,19 @@ are reassembled transparently, and pings are answered automatically. This
 is what makes it possible to place the Iran-side server behind an nginx
 WebSocket proxy or a CDN instead of only a plain TCP passthrough.
 
+### Real certificates for `tls`/`wss`/`wssmux`
+
+By default these generate a fresh self-signed certificate on every start
+— fine against DPI that only reads the ClientHello's SNI, but a
+self-signed cert stands out to anyone who actively probes the port. If a
+domain's DNS points at the Iran server, `bm` can request a real, free
+certificate from Let's Encrypt for it automatically (setup asks "Do you
+have a domain pointing at this server?", or add one later from `Edit
+settings`) — set `"domain"` in `config.json` to do it by hand. Needs port
+80 reachable for the ACME HTTP-01 challenge; the foreign/client side
+needs no changes, since it already ignores certificate validity (it's
+authenticated by the shared token, not the certificate).
+
 ### Plain vs. mux transports
 
 `tcp`/`tls`/`ws`/`wss` open one physical connection per forwarded TCP
@@ -252,6 +265,18 @@ multiplex می‌کنند — یعنی زیر بار زیاد، سوکت و هن
 می‌شوند، و پینگ‌ها خودکار جواب داده می‌شوند. همین باعث می‌شود بشود سرور
 ایران را پشت یک پراکسی WebSocket واقعی (nginx) یا یک CDN گذاشت، نه فقط
 یک پاس‌ثرو TCP ساده.
+
+### گواهی واقعی برای `tls`/`wss`/`wssmux`
+
+پیش‌فرض یه گواهی self-signed تازه در هر اجراست — در برابر DPIـی که فقط
+SNI رو می‌خونه کافیه، ولی جلوی probe فعال (وقتی واقعاً وصل می‌شه و گواهی
+رو بررسی می‌کنه) لو می‌ره. اگه یه دامنه DNSش به سرور ایران اشاره کنه،
+`bm` می‌تونه خودکار یه گواهی رایگان و واقعی از Let's Encrypt براش بگیره
+(موقع setup می‌پرسه «دامنه‌ای دارید؟»، یا بعداً از `Edit settings` اضافه
+کنید) — یا دستی `"domain"` رو تو `config.json` ست کنید. پورت ۸۰ باید در
+دسترس باشه (برای چالش HTTP-01 ACME)؛ سمت خارج نیازی به تغییر نداره، چون
+از اول هم به اعتبار گواهی کاری نداره (با توکن مشترک احراز هویت می‌شه، نه
+گواهی).
 
 ## نکات پیکربندی
 
@@ -436,6 +461,20 @@ IPsec требует, чтобы адрес источника оставалс�
 прозрачно собираются обратно, а на ping автоматически отвечает pong. Именно
 это позволяет разместить иранский сервер за настоящим WebSocket-прокси
 (nginx) или CDN, а не только за простым TCP passthrough.
+
+### Настоящий сертификат для `tls`/`wss`/`wssmux`
+
+По умолчанию при каждом запуске генерируется новый самоподписанный
+сертификат - этого достаточно против DPI, читающего только SNI в
+ClientHello, но самоподписанный сертификат выдаёт себя при активном
+зондировании (когда реально подключаются и проверяют, что вернулось).
+Если DNS домена указывает на иранский сервер, `bm` может автоматически
+запросить настоящий бесплатный сертификат у Let's Encrypt (при настройке
+спрашивает «Есть ли домен, указывающий на этот сервер?», либо добавьте
+позже через `Edit settings`) - или задайте `"domain"` в `config.json`
+вручную. Нужен доступный порт 80 (для ACME-проверки HTTP-01); заграничная
+сторона изменений не требует, так как она и так не проверяет валидность
+сертификата (аутентификация по общему токену, а не по сертификату).
 
 ## Настройка
 

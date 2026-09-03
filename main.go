@@ -41,6 +41,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/crypto/acme/autocert"
+
 	kcp "github.com/xtaci/kcp-go/v5"
 )
 
@@ -86,6 +88,11 @@ type Config struct {
 	Forwards  []Forward    `json:"forwards"`
 	Verbose   bool         `json:"verbose"`
 	Panel     *PanelConfig `json:"panel,omitempty"`
+	// Domain, server only: when set, a tls/wss/wssmux listener requests a
+	// real certificate from Let's Encrypt for this domain (via ACME
+	// HTTP-01, needs port 80 reachable) instead of generating a
+	// self-signed one. SNI should match this domain in that case.
+	Domain string `json:"domain,omitempty"`
 }
 
 func (c *Config) applyDefaults() {
@@ -265,6 +272,32 @@ func tlsServerConfig(sni string) (*tls.Config, error) {
 		MinVersion:   tls.VersionTLS12,
 		NextProtos:   []string{"http/1.1"},
 	}, nil
+}
+
+// acmeTLSConfig requests a real certificate from Let's Encrypt for domain
+// instead of generating a self-signed one - a real cert holds up far
+// better against active probing (a DPI system that actually connects and
+// inspects what comes back) than a self-signed one with a fake SNI.
+//
+// Uses ACME HTTP-01, which needs port 80 reachable from the internet -
+// deliberately not TLS-ALPN-01, since that challenge type always probes
+// port 443 specifically regardless of which port the tunnel itself is
+// configured on, so it wouldn't work with e.g. the default 8443. The
+// HTTP-01 listener is best-effort: if port 80 is already taken, this logs
+// and keeps going rather than failing tunnel startup, since the initial
+// certificate (or a cached one from a prior run) may still be usable.
+func acmeTLSConfig(domain string) *tls.Config {
+	m := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(domain),
+		Cache:      autocert.DirCache("/etc/tifusi/certs"),
+	}
+	go func() {
+		if err := http.ListenAndServe(":80", m.HTTPHandler(nil)); err != nil {
+			log.Printf("acme: http-01 challenge listener on :80 failed: %v (cert issuance/renewal may fail without it)", err)
+		}
+	}()
+	return m.TLSConfig()
 }
 
 // tuneKCP configures a KCP session for the "udp" transport: fast mode (no
@@ -639,9 +672,16 @@ func (s *Server) Run() error {
 		}
 		ln = net.Listener(nodelayListener{rawLn})
 		if s.cfg.Transport == "tls" || s.cfg.Transport == "wss" || s.cfg.Transport == "wssmux" {
-			tc, err := tlsServerConfig(s.cfg.SNI)
-			if err != nil {
-				return err
+			var tc *tls.Config
+			if s.cfg.Domain != "" {
+				tc = acmeTLSConfig(s.cfg.Domain)
+				s.log("requesting a real certificate from Let's Encrypt for %s", s.cfg.Domain)
+			} else {
+				var err error
+				tc, err = tlsServerConfig(s.cfg.SNI)
+				if err != nil {
+					return err
+				}
 			}
 			ln = tls.NewListener(ln, tc)
 		}

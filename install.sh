@@ -347,6 +347,13 @@ is_ws_family() {
   case "$1" in ws|wss|wsmux|wssmux) return 0 ;; *) return 1 ;; esac
 }
 
+# true (0) if $1 is a transport that actually presents a TLS certificate
+# (tls/wss/wssmux) - the only ones a real, Let's-Encrypt-issued cert
+# (instead of the default self-signed one) applies to.
+uses_tls() {
+  case "$1" in tls|wss|wssmux) return 0 ;; *) return 1 ;; esac
+}
+
 # arvan_hint prints a short setup guide for fronting this server's tunnel
 # port with ArvanCloud - an Iranian CDN that is itself whitelisted inside
 # Iran, so traffic to it is far less likely to be blocked outright than
@@ -369,7 +376,7 @@ arvan_hint() {
 
 setup_server() {
   step "Set up as IRAN side" "public entry point - owns the ports users connect to"
-  local port token transport sni path cfg ip use_cdn=""
+  local port token transport sni path cfg ip use_cdn="" domain=""
   port=$(ask "Tunnel port (the foreign server dials this)" 8443)
   token=$(ask "Shared token (leave empty to generate)" "")
   [ -z "$token" ] && token=$("$BIN" -gen-token)
@@ -380,16 +387,30 @@ setup_server() {
   fi
   if [[ "$use_cdn" =~ ^[Yy]$ ]]; then
     sni=$(ask_required "Your ArvanCloud domain (used as SNI - not a fake one)")
+  elif uses_tls "$transport"; then
+    read -r -p "  ${W}Do you have a domain pointing at this server?${N} [y/N]: " has_domain
+    if [[ "$has_domain" =~ ^[Yy]$ ]]; then
+      domain=$(ask_required "Domain (its DNS A record must point at this server's IP)")
+      sni="$domain"
+      echo "   ${D}A free, real certificate will be requested from Let's Encrypt for this${N}"
+      echo "   ${D}domain automatically - needs port 80 reachable for validation. A real${N}"
+      echo "   ${D}certificate holds up far better against active probing than a self-signed one.${N}"
+    else
+      sni=$(ask_required "SNI / hostname to disguise as (e.g. a real site's domain)")
+    fi
   else
     sni=$(ask_required "SNI / hostname to disguise as (e.g. a real site's domain)")
   fi
   path=$(ask "HTTP path (ws/wss only)" "/tunnel")
 
   cfg=$(jq -n --arg l "0.0.0.0:$port" --arg t "$transport" --arg tok "$token" \
-              --arg s "$sni" --arg p "$path" \
-        '{mode:"server", listen:$l, transport:$t, token:$tok, sni:$s, path:$p, forwards:[]}')
+              --arg s "$sni" --arg p "$path" --arg dom "$domain" \
+        '{mode:"server", listen:$l, transport:$t, token:$tok, sni:$s, path:$p,
+          domain:(if $dom=="" then null else $dom end), forwards:[]}
+         | with_entries(select(.value != null))')
   save_cfg "$cfg"
   open_port "$port" tcp
+  [ -n "$domain" ] && open_port 80 tcp
   ip=$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo YOUR_IRAN_IP)
   echo
   ok "server configured"
@@ -530,6 +551,7 @@ edit_settings() {
     echo "    path      : ${W}$(jq -r .path "$CFG")${N}"
     if [ "$mode" = server ]; then
       echo "    listen    : ${W}$(jq -r .listen "$CFG")${N}"
+      echo "    domain    : ${W}$(jq -r '.domain // "(none - self-signed cert)"' "$CFG")${N}"
     else
       echo "    server    : ${W}$(jq -r .server "$CFG")${N}"
       echo "    pool      : ${W}$(jq -r .pool "$CFG")${N}  ${D}(plain transports)${N}"
@@ -542,6 +564,7 @@ edit_settings() {
     echo "   ${R}4${N}) ${W}path${N}         ${D}HTTP path for ws/wss and their mux variants${N}"
     if [ "$mode" = server ]; then
       echo "   ${R}5${N}) ${W}tunnel port${N}  ${D}what the foreign server dials${N}"
+      echo "   ${R}8${N}) ${W}Domain${N}       ${D}real Let's Encrypt cert instead of self-signed (tls/wss/wssmux)${N}"
     else
       echo "   ${R}5${N}) ${W}Iran ip:port${N} ${D}where this client connects${N}"
       echo "   ${R}6${N}) ${W}pool / mux_con${N}  ${D}warm connections / physical mux links${N}"
@@ -565,6 +588,14 @@ edit_settings() {
          tmp=$(jq --argjson p "$v" '.pool=$p | .mux_con=$p' "$CFG") && echo "$tmp" | jq . > "$CFG" && ok "pool = mux_con = $v"
          pause ;;
       7) performance; pause ;;
+      8) [ "$mode" = server ] || { warn "server only"; sleep 1; continue; }
+         v=$(ask "New domain (leave empty to go back to a self-signed cert)" "")
+         if [ -n "$v" ]; then
+           set_field sni "$v"; set_field domain "$v"; open_port 80 tcp
+         else
+           tmp=$(jq 'del(.domain)' "$CFG") && echo "$tmp" | jq . > "$CFG" && ok "domain cleared - back to self-signed"
+         fi
+         pause ;;
       0) break ;;
       *) warn "invalid choice"; sleep 1 ;;
     esac
