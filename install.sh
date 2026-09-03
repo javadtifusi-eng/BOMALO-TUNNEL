@@ -312,17 +312,11 @@ pick_transport() {
   {
     echo
     echo "  ${W}${BD}Transport family:${N}"
-    echo "    ${R}1${N}) ${W}tcp${N}"
-    echo "    ${R}2${N}) ${W}tls${N}"
-    echo "    ${R}3${N}) ${W}ws${N}"
-    echo "    ${R}4${N}) ${W}wss${N}"
-    echo "    ${R}5${N}) ${W}udp${N}"
-    echo
-    echo "    ${D}tcp   raw, fastest, no disguise${N}"
-    echo "    ${D}tls   TLS with a self-signed certificate${N}"
-    echo "    ${D}ws    HTTP/WebSocket upgrade${N}"
-    echo "    ${D}wss   WebSocket inside TLS - best against DPI${N}"
-    echo "    ${D}udp   raw UDP (KCP) - fast, no disguise, good on lossy links${N}"
+    echo "    ${R}1${N}) ${G}tcp${N}"
+    echo "    ${R}2${N}) ${G}tls${N}"
+    echo "    ${R}3${N}) ${G}ws${N}"
+    echo "    ${R}4${N}) ${G}wss${N}"
+    echo "    ${R}5${N}) ${G}udp${N}"
   } >&2
   local c; read -r -p "  ${W}choice${N} [1]: " c
   case "${c:-1}" in
@@ -336,11 +330,8 @@ pick_transport() {
   {
     echo
     echo "  ${W}${BD}$fam variant:${N}"
-    echo "    ${R}1${N}) ${W}$fam${N}"
-    echo "    ${R}2${N}) ${W}${fam}mux${N}"
-    echo
-    echo "    ${D}$fam      plain${N}"
-    echo "    ${D}${fam}mux   multiplexed - fewer sockets under many sessions${N}"
+    echo "    ${R}1${N}) ${G}$fam${N}      ${W}${BD}plain${N}"
+    echo "    ${R}2${N}) ${G}${fam}mux${N}   ${W}${BD}multiplexed${N}"
   } >&2
   local v; read -r -p "  ${W}choice${N} [1]: " v
   case "$v" in
@@ -370,14 +361,15 @@ uses_tls() {
 arvan_hint() {
   local myip; myip=$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo YOUR_IRAN_IP)
   echo
-  echo "  ${C}${BD}ArvanCloud CDN${N} ${D}(arvancloud.ir - whitelisted inside Iran)${N}"
-  echo "   ${D}1.${N} Buy/point a domain at ArvanCloud and add it as a CDN zone."
-  echo "   ${D}2.${N} DNS ${W}A${N} record for that domain -> this server's IP: ${W}$myip${N}"
-  echo "   ${D}3.${N} In the ArvanCloud panel, enable ${W}WebSocket${N} support for the zone"
-  echo "      and set the origin port to the tunnel port you just chose."
-  echo "   ${D}4.${N} Below, use ${W}that domain${N} (not a fake one) as the SNI, so ArvanCloud"
-  echo "      can actually route the handshake to this server."
-  echo "   ${D}   Users then reach you via ArvanCloud's edge, not this VPS's raw IP.${N}"
+  echo "  ${C}${BD}ArvanCloud CDN${N}"
+  echo "  ${D}arvancloud.ir - whitelisted inside Iran${N}"
+  echo
+  echo "   ${D}1.${N} Add your domain as a CDN zone on ArvanCloud"
+  echo "   ${D}2.${N} DNS A record -> ${W}$myip${N}"
+  echo "   ${D}3.${N} Enable ${W}WebSocket${N}, origin port = tunnel port"
+  echo "   ${D}4.${N} Use that domain as the SNI below"
+  echo
+  echo "  ${D}Users then reach you via ArvanCloud, not your raw IP.${N}"
   echo
 }
 
@@ -412,10 +404,17 @@ setup_server() {
   fi
   path=$(ask "HTTP path (ws/wss only)" "/tunnel")
 
+  # Re-running this (e.g. to change transport/SNI) must not wipe out
+  # forwards that were already added and may be serving live traffic -
+  # carry over whatever the existing config already has.
+  local existing_forwards="[]"
+  [ -f "$CFG" ] && existing_forwards=$(jq -c '.forwards // []' "$CFG" 2>/dev/null || echo "[]")
+
   cfg=$(jq -n --arg l "0.0.0.0:$port" --arg t "$transport" --arg tok "$token" \
               --arg s "$sni" --arg p "$path" --arg dom "$domain" \
+              --argjson fw "$existing_forwards" \
         '{mode:"server", listen:$l, transport:$t, token:$tok, sni:$s, path:$p,
-          domain:(if $dom=="" then null else $dom end), forwards:[]}
+          domain:(if $dom=="" then null else $dom end), forwards:$fw}
          | with_entries(select(.value != null))')
   save_cfg "$cfg"
   open_port "$port" tcp
@@ -566,7 +565,7 @@ edit_settings() {
   local mode; mode=$(jq -r .mode "$CFG")
   while true; do
     step "Settings" "$mode"
-    echo "    transport : ${W}$(jq -r .transport "$CFG")${N}"
+    echo "    transport : ${G}$(jq -r .transport "$CFG")${N}"
     echo "    token     : ${W}$(jq -r .token "$CFG")${N}"
     echo "    sni       : ${W}$(jq -r .sni "$CFG")${N}"
     echo "    path      : ${W}$(jq -r .path "$CFG")${N}"
@@ -579,7 +578,7 @@ edit_settings() {
       echo "    mux_con   : ${W}$(jq -r '.mux_con // 8' "$CFG")${N}  ${D}(tcpmux/wsmux/wssmux)${N}"
     fi
     echo
-    echo "   ${R}1${N}) ${W}transport${N}    ${D}tcp/tls/ws/wss/tcpmux/wsmux/wssmux${N}"
+    echo "   ${R}1${N}) ${W}transport${N}    ${G}tcp/tls/ws/wss/tcpmux/wsmux/wssmux${N}"
     echo "   ${R}2${N}) ${W}token${N}        ${D}shared secret - must match on both servers${N}"
     echo "   ${R}3${N}) ${W}SNI${N}          ${D}fake hostname for tls/ws/wss and their mux variants${N}"
     echo "   ${R}4${N}) ${W}path${N}         ${D}HTTP path for ws/wss and their mux variants${N}"
@@ -632,7 +631,7 @@ show_status() {
   echo
   if [ -f "$CFG" ]; then
     echo "  mode      : ${W}$(jq -r .mode "$CFG")${N}"
-    echo "  transport : ${W}$(jq -r .transport "$CFG")${N}"
+    echo "  transport : ${G}$(jq -r .transport "$CFG")${N}"
     echo "  token     : ${W}$(jq -r .token "$CFG")${N}"
     [ "$(jq -r .mode "$CFG")" = "server" ] && list_forwards
   else

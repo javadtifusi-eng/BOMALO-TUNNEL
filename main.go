@@ -48,12 +48,44 @@ import (
 
 const version = "1.0.0"
 
-const banner = `
- _____ ___ ___ _   _ ___ ___   _____ _   _ _  _ _  _ ___ _
-|_   _|_ _| __| | | / __|_ _| |_   _| | | | \| | \| | __| |
-  | |  | || _|| |_| \__ \| |    | | | |_| | .` + "`" + ` | .` + "`" + ` | _|| |__
-  |_| |___|_|  \___/|___/___|   |_|  \___/|_|\_|_|\_|___|____|
-`
+const (
+	ansiReset = "\033[0m"
+	ansiBold  = "\033[1m"
+	ansiCyan  = "\033[96m"
+	ansiDim   = "\033[90m"
+	ansiBlue  = "\033[94m"
+)
+
+// printBanner draws a small boxed header for interactive/log output -
+// width is computed so centering always lines up, unlike a hand-drawn
+// ASCII art block that has to be re-measured by hand every time the
+// text changes.
+func printBanner(ver, mode, transport string) {
+	const bw = 50
+	frame := ansiBlue + ansiBold
+	rule := strings.Repeat("═", bw)
+	line := func(text, color string) {
+		pad := bw - len([]rune(text))
+		if pad < 0 {
+			pad = 0
+		}
+		left := pad / 2
+		fmt.Printf("  %s║%s%s%s%s%s%s║%s\n",
+			frame, ansiReset,
+			strings.Repeat(" ", left), color+ansiBold, text, ansiReset,
+			strings.Repeat(" ", pad-left), frame+ansiReset)
+	}
+	fmt.Println()
+	fmt.Printf("  %s╔%s╗%s\n", frame, rule, ansiReset)
+	line("", "")
+	line("TIFUSI TUNNEL", ansiCyan)
+	line("reverse tunnel · client-initiated", ansiDim)
+	line("", "")
+	fmt.Printf("  %s╚%s╝%s\n", frame, rule, ansiReset)
+	fmt.Println()
+	fmt.Printf("  %s%s%s  mode: %s%s%s  transport: %s%s%s\n\n",
+		ansiBold, ver, ansiReset, ansiCyan, mode, ansiReset, ansiCyan, transport, ansiReset)
+}
 
 // ---------------------------------------------------------------- config
 
@@ -1420,8 +1452,7 @@ func main() {
 		return
 	}
 
-	fmt.Print(banner)
-	fmt.Printf("  Tifusi Tunnel %s  |  mode: %s  |  transport: %s\n\n", version, cfg.Mode, cfg.Transport)
+	printBanner(version, cfg.Mode, cfg.Transport)
 
 	go func() {
 		sig := make(chan os.Signal, 1)
