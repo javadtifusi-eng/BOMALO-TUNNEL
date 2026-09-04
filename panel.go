@@ -13,18 +13,23 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -63,6 +68,9 @@ func runPanel(cfg *Config, cfgPath string) {
 	mux.HandleFunc("/api/restart", panelAuth(cfg, handleRestart))
 	mux.HandleFunc("/api/status", panelAuth(cfg, handleStatus))
 	mux.HandleFunc("/api/logs", panelAuth(cfg, handleLogs))
+	mux.HandleFunc("/api/testconn", panelAuth(cfg, func(w http.ResponseWriter, r *http.Request) { handleTestConn(w, r, cfgPath) }))
+	mux.HandleFunc("/api/speedtest/download", panelAuth(cfg, handleSpeedtestDown))
+	mux.HandleFunc("/api/speedtest/upload", panelAuth(cfg, handleSpeedtestUp))
 
 	srv := &http.Server{Addr: cfg.Panel.Listen, Handler: mux, TLSConfig: tc}
 	log.Printf("web panel listening on %s (https)", cfg.Panel.Listen)
@@ -370,4 +378,147 @@ func writeConfigFile(path string, cfg *Config) error {
 		return err
 	}
 	return os.WriteFile(path, b, 0o600)
+}
+
+// ---- /api/testconn -----------------------------------------------------
+
+// testConnLogRe mirrors the grep -E pattern test_connection() in install.sh
+// uses to find the most recent connection-state log line.
+var testConnLogRe = regexp.MustCompile(`client connected from|client .* disconnected|control link established|control link lost`)
+
+type testCheck struct {
+	OK   bool   `json:"ok"`
+	Text string `json:"text"`
+}
+
+// handleTestConn ports install.sh's test_connection(): it checks whether the
+// tunnel port is actually bound/reachable and what the most recent
+// connection-state log line says, instead of just "is the process running".
+func handleTestConn(w http.ResponseWriter, r *http.Request, cfgPath string) {
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	var checks []testCheck
+	out, _ := exec.Command("systemctl", "is-active", "tifusi").Output()
+	if strings.TrimSpace(string(out)) != "active" {
+		checks = append(checks, testCheck{false, "service is not running - nothing to test, check Status"})
+		writeJSON(w, map[string]interface{}{"running": false, "checks": checks})
+		return
+	}
+	checks = append(checks, testCheck{true, "service is running"})
+
+	logOut, _ := exec.Command("journalctl", "-u", "tifusi", "-n", "300", "--no-pager").CombinedOutput()
+	last := lastMatchingLine(string(logOut))
+
+	if cfg.Mode == "server" {
+		port := cfg.Listen
+		if i := strings.LastIndex(port, ":"); i >= 0 {
+			port = port[i+1:]
+		}
+		if portListening(port) {
+			checks = append(checks, testCheck{true, fmt.Sprintf("tunnel port %s is listening", port)})
+		} else {
+			checks = append(checks, testCheck{false, fmt.Sprintf("tunnel port %s does not look like it's listening", port)})
+		}
+		switch {
+		case strings.Contains(last, "client connected"):
+			checks = append(checks, testCheck{true, "a foreign server is connected"})
+		case strings.Contains(last, "disconnected"):
+			checks = append(checks, testCheck{false, "the last foreign server disconnected - waiting for it to reconnect"})
+		default:
+			checks = append(checks, testCheck{false, "no foreign server has connected yet - check it's running with the same token/transport/SNI/path"})
+		}
+	} else {
+		ip, port := cfg.Server, ""
+		if i := strings.LastIndex(cfg.Server, ":"); i >= 0 {
+			ip, port = cfg.Server[:i], cfg.Server[i+1:]
+		}
+		if cfg.Transport == "udp" {
+			checks = append(checks, testCheck{true, "TCP probe skipped - transport is udp, that's expected"})
+		} else if conn, err := net.DialTimeout("tcp", ip+":"+port, 5*time.Second); err == nil {
+			conn.Close()
+			checks = append(checks, testCheck{true, fmt.Sprintf("reachable: opened a TCP connection to %s:%s", ip, port)})
+		} else {
+			checks = append(checks, testCheck{false, fmt.Sprintf("could not open a TCP connection to %s:%s - check the Iran server and its firewall", ip, port)})
+		}
+		switch {
+		case strings.Contains(last, "control link established"):
+			checks = append(checks, testCheck{true, "control link is established with the Iran server"})
+		case strings.Contains(last, "control link lost"):
+			checks = append(checks, testCheck{false, "control link was lost and is reconnecting"})
+		default:
+			checks = append(checks, testCheck{false, "no confirmed control link yet - check the logs"})
+		}
+	}
+
+	writeJSON(w, map[string]interface{}{"running": true, "checks": checks, "lastActivity": last})
+}
+
+func lastMatchingLine(log string) string {
+	lines := strings.Split(log, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if testConnLogRe.MatchString(lines[i]) {
+			return strings.TrimSpace(lines[i])
+		}
+	}
+	return ""
+}
+
+// portListening shells out to ss the same way install.sh's test_connection
+// does - a plain net.Dial can't tell "nothing is listening" apart from "a
+// firewall is silently dropping it" the way inspecting the local socket
+// table can.
+func portListening(port string) bool {
+	for _, args := range [][]string{{"-ltn"}, {"-lun"}} {
+		out, err := exec.Command("ss", args...).Output()
+		if err == nil && strings.Contains(string(out), ":"+port+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// ---- /api/speedtest -----------------------------------------------------
+
+// speedtestChunk is filled once at startup and reused for every download
+// response - the point is to measure raw throughput to/from this server
+// (most relevant on the Iran side, since that's usually the bottleneck
+// users actually care about), not to burn CPU regenerating random bytes on
+// every request.
+var speedtestChunk = func() []byte {
+	b := make([]byte, 1<<20) // 1 MiB
+	_, _ = rand.Read(b)
+	return b
+}()
+
+const speedtestMaxMB = 200
+
+func handleSpeedtestDown(w http.ResponseWriter, r *http.Request) {
+	mb, _ := strconv.Atoi(r.URL.Query().Get("mb"))
+	if mb <= 0 {
+		mb = 20
+	}
+	if mb > speedtestMaxMB {
+		mb = speedtestMaxMB
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(mb*len(speedtestChunk)))
+	for i := 0; i < mb; i++ {
+		if _, err := w.Write(speedtestChunk); err != nil {
+			return
+		}
+	}
+}
+
+func handleSpeedtestUp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	n, _ := io.Copy(io.Discard, io.LimitReader(r.Body, int64(speedtestMaxMB)<<20))
+	writeJSON(w, map[string]int64{"bytes": n})
 }

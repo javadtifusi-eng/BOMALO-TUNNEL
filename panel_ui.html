@@ -14,8 +14,8 @@
     --ink:#eef2f8;
     --muted:#8a96ab;
     --muted-dim:#5c6579;
-    --gold:#d99a3c;
-    --gold-bright:#f7d894;
+    --cyan:#22d3ee;
+    --cyan-bright:#7ee7f7;
     --crimson:#c8102e;
     --green:#4caf72;
     --red:#e0616f;
@@ -27,9 +27,9 @@
   html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px}
   body{min-height:100vh;line-height:1.5}
   [hidden]{display:none!important}
-  a{color:var(--gold-bright)}
+  a{color:var(--cyan-bright)}
   input,select,button,textarea{font-family:inherit;font-size:14px}
-  code{font-family:var(--mono);font-size:.9em;background:rgba(217,154,60,.1);padding:1px 6px;border-radius:5px;color:var(--gold-bright)}
+  code{font-family:var(--mono);font-size:.9em;background:rgba(34,211,238,.12);padding:1px 6px;border-radius:5px;color:var(--cyan-bright)}
 
   /* ---------------- login ---------------- */
   #login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
@@ -41,10 +41,10 @@
   .field{margin-bottom:14px}
   .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;letter-spacing:.03em}
   .field input{width:100%;background:var(--bg-raised-2);border:1px solid var(--hairline);border-radius:8px;color:var(--ink);padding:10px 12px}
-  .field input:focus{outline:none;border-color:var(--gold)}
+  .field input:focus{outline:none;border-color:var(--cyan)}
   .btn{
     display:inline-flex;align-items:center;justify-content:center;gap:6px;
-    background:linear-gradient(180deg,#e3ab55,var(--gold));color:#241505;font-weight:600;
+    background:linear-gradient(180deg,#67e0f0,var(--cyan));color:#052a30;font-weight:600;
     border:none;border-radius:8px;padding:11px 18px;cursor:pointer;width:100%;
   }
   .btn:hover{filter:brightness(1.05)}
@@ -54,7 +54,7 @@
   .err{color:var(--red);font-size:13px;margin-top:10px;text-align:center;min-height:1em}
   .lang-toggle{display:flex;justify-content:center;gap:6px;margin-top:18px}
   .lang-toggle button{background:none;border:1px solid var(--hairline);color:var(--muted);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px}
-  .lang-toggle button.active{color:var(--gold-bright);border-color:var(--gold)}
+  .lang-toggle button.active{color:var(--cyan-bright);border-color:var(--cyan)}
 
   /* ---------------- app shell ---------------- */
   #app{display:none;min-height:100vh}
@@ -69,6 +69,21 @@
   .pill .dot{width:7px;height:7px;border-radius:50%;background:var(--muted-dim)}
   .pill.running .dot{background:var(--green);box-shadow:0 0 6px var(--green)}
   .pill.stopped .dot{background:var(--red)}
+  .clock{font-family:var(--mono);font-size:12.5px;color:var(--muted);white-space:nowrap}
+  #clock-login{margin-top:8px;font-size:11.5px}
+
+  .check-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .check-list li{display:flex;align-items:flex-start;gap:9px;font-size:13.5px;line-height:1.4}
+  .check-list .mark{flex-shrink:0;width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;margin-top:1px}
+  .check-list .mark.ok{background:rgba(76,175,114,.18);color:var(--green)}
+  .check-list .mark.bad{background:rgba(224,97,111,.18);color:var(--red)}
+  .last-activity{margin-top:12px;font-family:var(--mono);font-size:11.5px;color:var(--muted-dim);word-break:break-word}
+
+  .speed-result{display:flex;gap:22px;margin-top:16px;flex-wrap:wrap}
+  .speed-stat{display:flex;flex-direction:column;gap:2px}
+  .speed-stat .num{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--cyan-bright)}
+  .speed-stat .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .speed-status{font-size:12.5px;color:var(--muted-dim);margin-top:10px;min-height:1.2em}
 
   main{max-width:880px;margin:0 auto;padding:26px 20px 70px;display:flex;flex-direction:column;gap:22px}
   .card{background:var(--bg-raised);border:1px solid var(--hairline);border-radius:var(--radius);padding:20px 22px}
@@ -79,7 +94,7 @@
   @media(max-width:600px){.grid2{grid-template-columns:1fr}}
   .field-row label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
   .field-row input,.field-row select{width:100%;background:var(--bg-raised-2);border:1px solid var(--hairline);border-radius:8px;color:var(--ink);padding:9px 11px}
-  .field-row input:focus,.field-row select:focus{outline:none;border-color:var(--gold)}
+  .field-row input:focus,.field-row select:focus{outline:none;border-color:var(--cyan)}
   .hint{font-size:12px;color:var(--muted-dim);margin-top:5px}
 
   table{width:100%;border-collapse:collapse;font-size:13.5px}
@@ -124,6 +139,7 @@
       </g></svg>
       <h1>Tifusi Tunnel</h1>
       <p data-t="login.subtitle">management panel</p>
+      <p class="clock" id="clock-login"></p>
     </div>
     <form id="login-form">
       <div class="field">
@@ -154,6 +170,7 @@
       <path d="M366,610 L434,610 L440,636 L360,636 Z" stroke-width="5"/>
     </g></svg>
     <h1>Tifusi Tunnel</h1>
+    <span class="clock" id="clock-app"></span>
     <span class="pill" id="status-pill"><span class="dot"></span><span id="status-text">&mdash;</span></span>
     <button class="btn ghost small" id="btn-lang-en">EN</button>
     <button class="btn ghost small" id="btn-lang-fa">فا</button>
@@ -231,6 +248,29 @@
     </section>
 
     <section class="card">
+      <h2 data-t="section.testconn">Connection test</h2>
+      <p class="hint" data-t="hint.testconn">Checks whether the tunnel is actually passing traffic, not just whether the process is running.</p>
+      <ul class="check-list" id="testconn-list"></ul>
+      <div class="last-activity" id="testconn-activity"></div>
+      <div class="card-actions">
+        <button class="btn ghost" id="btn-testconn" data-t="action.testconn">Test connection</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 data-t="section.speedtest">Speed test</h2>
+      <p class="hint" data-t="hint.speedtest">Measures raw throughput to/from this server over HTTPS - a quick way to see if the bottleneck is this box's own link.</p>
+      <div class="speed-result">
+        <div class="speed-stat"><span class="num" id="speed-down">&mdash;</span><span class="lbl" data-t="speedtest.download">Download Mbps</span></div>
+        <div class="speed-stat"><span class="num" id="speed-up">&mdash;</span><span class="lbl" data-t="speedtest.upload">Upload Mbps</span></div>
+      </div>
+      <div class="speed-status" id="speed-status"></div>
+      <div class="card-actions">
+        <button class="btn ghost" id="btn-speedtest" data-t="action.speedtest">Run speed test</button>
+      </div>
+    </section>
+
+    <section class="card">
       <h2 data-t="section.service">Service</h2>
       <div class="card-actions">
         <button class="btn ghost" id="btn-restart" data-t="action.restart">Restart service</button>
@@ -267,7 +307,14 @@
       "toast.saved":"Saved and restarted", "toast.forwardadded":"Forward added", "toast.forwardremoved":"Forward removed",
       "toast.restarted":"Service restarted", "toast.error":"Something went wrong", "toast.nologs":"No logs yet",
       "status.running":"running", "status.stopped":"stopped", "status.unknown":"unknown",
-      "empty.forwards":"No forwarded ports yet.", "action.remove":"Remove"
+      "empty.forwards":"No forwarded ports yet.", "action.remove":"Remove",
+      "section.testconn":"Connection test", "action.testconn":"Test connection",
+      "hint.testconn":"Checks whether the tunnel is actually passing traffic, not just whether the process is running.",
+      "section.speedtest":"Speed test", "action.speedtest":"Run speed test",
+      "hint.speedtest":"Measures raw throughput to/from this server over HTTPS - a quick way to see if the bottleneck is this box's own link.",
+      "speedtest.download":"Download Mbps", "speedtest.upload":"Upload Mbps",
+      "speedtest.testingdown":"Testing download…", "speedtest.testingup":"Testing upload…", "speedtest.done":"Done",
+      "testconn.norun":"Run the test to check the live connection."
     },
     fa: {
       "login.subtitle":"پنل مدیریت", "login.username":"نام کاربری", "login.password":"رمز عبور",
@@ -286,7 +333,14 @@
       "toast.saved":"ذخیره و ری‌استارت شد", "toast.forwardadded":"فوروارد اضافه شد", "toast.forwardremoved":"فوروارد حذف شد",
       "toast.restarted":"سرویس ری‌استارت شد", "toast.error":"مشکلی پیش اومد", "toast.nologs":"هنوز لاگی نیست",
       "status.running":"در حال اجرا", "status.stopped":"متوقف", "status.unknown":"نامشخص",
-      "empty.forwards":"هنوز هیچ پورتی فوروارد نشده.", "action.remove":"حذف"
+      "empty.forwards":"هنوز هیچ پورتی فوروارد نشده.", "action.remove":"حذف",
+      "section.testconn":"تست اتصال", "action.testconn":"تست کن",
+      "hint.testconn":"بررسی می‌کنه که تانل واقعاً داره ترافیک رد و بدل می‌کنه، نه فقط اینکه پروسه‌ش بالاست.",
+      "section.speedtest":"تست سرعت", "action.speedtest":"اجرای تست سرعت",
+      "hint.speedtest":"سرعت خام آپلود/دانلود به این سرور رو از طریق HTTPS اندازه می‌گیره - سریع می‌فهمی گلوگاه خودِ همین سروره یا نه.",
+      "speedtest.download":"دانلود (Mbps)", "speedtest.upload":"آپلود (Mbps)",
+      "speedtest.testingdown":"در حال تست دانلود…", "speedtest.testingup":"در حال تست آپلود…", "speedtest.done":"تمام شد",
+      "testconn.norun":"برای بررسی اتصال زنده، تست رو اجرا کن."
     }
   };
 
@@ -307,7 +361,22 @@
     });
     localStorage.setItem("tifusi-panel-lang", lang);
   }
-  function setLang(l){ lang = l; applyLang(); if (cfg) render(); }
+  function setLang(l){ lang = l; applyLang(); updateClock(); if (cfg) render(); }
+
+  // ---- live clock, shown on both the login screen and the app header ----
+  function updateClock(){
+    var now = new Date();
+    var text;
+    try {
+      text = now.toLocaleString(lang === "fa" ? "fa-IR" : "en-GB", { dateStyle: "medium", timeStyle: "medium" });
+    } catch (e) {
+      text = now.toString();
+    }
+    var a = document.getElementById("clock-login"); if (a) a.textContent = text;
+    var b = document.getElementById("clock-app"); if (b) b.textContent = text;
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
 
   document.querySelectorAll(".lang-toggle button").forEach(function(b){
     b.addEventListener("click", function(){ setLang(b.getAttribute("data-lang")); });
@@ -369,6 +438,7 @@
     document.getElementById("app").classList.add("show");
     applyLang();
     render();
+    renderTestConnPlaceholder();
     refreshStatus();
     refreshLogs();
     setInterval(refreshStatus, 8000);
@@ -476,6 +546,88 @@
       .then(function(list){ cfg.forwards = list; renderForwards(); toast(t("toast.forwardremoved"), "ok"); })
       .catch(function(e){ toast(e.message || t("toast.error"), "error"); });
   }
+
+  // ---- connection test ----
+  function renderTestConnPlaceholder(){
+    var list = document.getElementById("testconn-list");
+    list.innerHTML = "";
+    var li = document.createElement("li");
+    li.style.color = "var(--muted-dim)";
+    li.textContent = t("testconn.norun");
+    list.appendChild(li);
+    document.getElementById("testconn-activity").textContent = "";
+  }
+
+  document.getElementById("btn-testconn").addEventListener("click", function(){
+    var btn = document.getElementById("btn-testconn");
+    btn.disabled = true;
+    api("/api/testconn").then(function(res){
+      var list = document.getElementById("testconn-list");
+      list.innerHTML = "";
+      (res.checks || []).forEach(function(c){
+        var li = document.createElement("li");
+        var mark = document.createElement("span");
+        mark.className = "mark " + (c.ok ? "ok" : "bad");
+        mark.textContent = c.ok ? "✓" : "✕";
+        var txt = document.createElement("span");
+        txt.textContent = c.text;
+        li.appendChild(mark); li.appendChild(txt);
+        list.appendChild(li);
+      });
+      var act = document.getElementById("testconn-activity");
+      act.textContent = res.lastActivity ? ("last activity: " + res.lastActivity) : "";
+    }).catch(function(e){ toast(e.message || t("toast.error"), "error"); })
+      .then(function(){ btn.disabled = false; });
+  });
+
+  // ---- speed test ----
+  function speedtestFetch(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({ "Authorization": authHeader() }, opts.headers || {});
+    return fetch(path, opts);
+  }
+
+  function runDownloadTest(mb){
+    var start = performance.now();
+    return speedtestFetch("/api/speedtest/download?mb=" + mb)
+      .then(function(r){ return r.arrayBuffer(); })
+      .then(function(buf){
+        var seconds = Math.max((performance.now() - start) / 1000, 0.001);
+        return (buf.byteLength * 8 / 1e6) / seconds;
+      });
+  }
+
+  function runUploadTest(mb){
+    var data = new Uint8Array(mb * 1024 * 1024);
+    var start = performance.now();
+    return speedtestFetch("/api/speedtest/upload", { method: "POST", body: data })
+      .then(function(r){ return r.json(); })
+      .then(function(){
+        var seconds = Math.max((performance.now() - start) / 1000, 0.001);
+        return (data.byteLength * 8 / 1e6) / seconds;
+      });
+  }
+
+  document.getElementById("btn-speedtest").addEventListener("click", function(){
+    var btn = document.getElementById("btn-speedtest");
+    var status = document.getElementById("speed-status");
+    btn.disabled = true;
+    document.getElementById("speed-down").textContent = "—";
+    document.getElementById("speed-up").textContent = "—";
+    status.textContent = t("speedtest.testingdown");
+    runDownloadTest(20)
+      .then(function(mbps){
+        document.getElementById("speed-down").textContent = mbps.toFixed(1);
+        status.textContent = t("speedtest.testingup");
+        return runUploadTest(8);
+      })
+      .then(function(mbps){
+        document.getElementById("speed-up").textContent = mbps.toFixed(1);
+        status.textContent = t("speedtest.done");
+      })
+      .catch(function(e){ status.textContent = e.message || t("toast.error"); })
+      .then(function(){ btn.disabled = false; });
+  });
 
   // ---- service controls ----
   document.getElementById("btn-restart").addEventListener("click", function(){
